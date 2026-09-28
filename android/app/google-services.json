@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "512001843482",
+    "project_id": "healthq-o",
+    "storage_bucket": "healthq-o.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:512001843482:android:3f8643665414d9b2a6cca3",
+        "android_client_info": {
+          "package_name": "com.example.healthq"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSWzv7nfsaVbwQU1Y-bs7_tj23Q9MFYa8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
