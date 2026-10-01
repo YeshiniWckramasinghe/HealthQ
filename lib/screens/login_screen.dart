@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'register_screen.dart';
+import 'home_screen.dart';
+import 'forgot_password_screen.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -12,12 +18,86 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isLoading = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _signIn() async {
+    setState(() => _isLoading = true);
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      debugPrint('AUTH ERROR CODE: ${e.code} — ${e.message}');
+      String message = 'Login failed. Please try again.';
+      if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
+        message = 'Incorrect email or password.';
+      } else if (e.code == 'wrong-password') {
+        message = 'Incorrect password.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Invalid email address.';
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+    try {
+      final googleSignIn = GoogleSignIn.instance;
+      await googleSignIn.initialize();
+      final account = await googleSignIn.authenticate();
+      final auth = account.authentication;
+
+      final credential = GoogleAuthProvider.credential(idToken: auth.idToken);
+      final userCredential =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+
+      if (userCredential.additionalUserInfo?.isNewUser == true) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'firstName': account.displayName ?? '',
+          'email': account.email,
+          'role': 'patient',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    } catch (e) {
+      debugPrint('GOOGLE SIGNIN ERROR: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Google sign-in failed. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -31,23 +111,23 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               // Logo
               Container(
-  width: 64,
-  height: 64,
-  decoration: BoxDecoration(
-    color: AppColors.white,
-    borderRadius: BorderRadius.circular(18),
-    boxShadow: [
-      BoxShadow(
-        color: AppColors.black.withOpacity(0.06),
-        blurRadius: 8,
-      ),
-    ],
-    image: const DecorationImage(
-      image: AssetImage('assets/images/onboard_1.jpeg'),
-      fit: BoxFit.contain,
-    ),
-  ),
-),
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.black.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                    ),
+                  ],
+                  image: const DecorationImage(
+                    image: AssetImage('assets/images/onboard_1.jpeg'),
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
               const SizedBox(height: 12),
               const Text(
                 'HealthQ',
@@ -109,9 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    // TODO: call FirebaseAuth signInWithEmailAndPassword
-                  },
+                  onPressed: _isLoading ? null : _signIn,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary400,
                     foregroundColor: AppColors.white,
@@ -120,7 +198,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       borderRadius: BorderRadius.circular(30),
                     ),
                   ),
-                  child: const Text('Sign In'),
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            color: AppColors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text('Sign In'),
                 ),
               ),
               const SizedBox(height: 12),
@@ -130,8 +217,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () => Navigator.of(context).push(
-  MaterialPageRoute(builder: (_) => const RegisterScreen()),
-),
+                    MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary200,
                     foregroundColor: AppColors.white,
@@ -152,9 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () {
-                    // TODO: implement Google sign-in
-                  },
+                  onPressed: _isLoading ? null : _signInWithGoogle,
                   icon: const Icon(Icons.g_mobiledata, size: 26),
                   label: const Text('Continue with Google'),
                   style: OutlinedButton.styleFrom(

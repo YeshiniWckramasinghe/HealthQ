@@ -104,7 +104,7 @@ void initState() {
                         end: Alignment.bottomCenter,
                         colors: [
                           Colors.transparent,
-                          AppColors.black.withOpacity(0.6),
+                          AppColors.black.withValues(alpha: 0.6),
                         ],
                       ),
                     ),
@@ -126,7 +126,7 @@ void initState() {
                         Text(
                           page.description ?? '',
                           style: TextStyle(
-                            color: AppColors.white.withOpacity(0.85),
+                            color: AppColors.white.withValues(alpha: 0.85),
                             fontSize: 14,
                           ),
                         ),
@@ -172,7 +172,7 @@ void initState() {
                   decoration: BoxDecoration(
                     color: _currentPage == i
                         ? AppColors.white
-                        : AppColors.white.withOpacity(0.5),
+                        : AppColors.white.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(3),
                   ),
                 ),

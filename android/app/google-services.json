@@ -12,7 +12,20 @@
           "package_name": "com.example.healthq"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "512001843482-o5o3155prfejn8qgd22ikgjjpm8frbs1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.healthq",
+            "certificate_hash": "ef788c0cf8ae2b0eb61ea682ff76f4817dcca794"
+          }
+        },
+        {
+          "client_id": "512001843482-1m7nkj96jve6si04pf29f0flibnr509b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBSWzv7nfsaVbwQU1Y-bs7_tj23Q9MFYa8"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "512001843482-1m7nkj96jve6si04pf29f0flibnr509b.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "512001843482-2c623010g24kkjj6nvbsm9bf1k5i8c0n.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.healthq"
+              }
+            }
+          ]
         }
       }
     }
