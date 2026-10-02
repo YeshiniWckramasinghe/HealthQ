@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
-import 'home_screen.dart';
+import '../Patient Management Screens/home_screen.dart';
 import 'login_screen.dart';
 
 class TermsScreen extends StatelessWidget {

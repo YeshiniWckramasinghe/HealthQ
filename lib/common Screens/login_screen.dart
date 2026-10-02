@@ -4,8 +4,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'register_screen.dart';
-import 'home_screen.dart';
 import 'forgot_password_screen.dart';
+import '../Patient Management Screens/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,12 +28,50 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signIn() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter both email and password.')),
+      );
+      return;
+    }
+
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email address.')),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
       );
+
+      // Verify or update user role in Firestore if needed
+      if (credential.user != null) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(credential.user!.uid)
+            .get();
+
+        if (!userDoc.exists) {
+          // If first time or missing Firestore entry, register patient default
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(credential.user!.uid)
+              .set({
+            'email': email,
+            'role': 'patient',
+            'lastLogin': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
+
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -42,16 +80,42 @@ class _LoginScreenState extends State<LoginScreen> {
     } on FirebaseAuthException catch (e) {
       debugPrint('AUTH ERROR CODE: ${e.code} — ${e.message}');
       String message = 'Login failed. Please try again.';
-      if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
-        message = 'Incorrect email or password.';
-      } else if (e.code == 'wrong-password') {
-        message = 'Incorrect password.';
-      } else if (e.code == 'invalid-email') {
-        message = 'Invalid email address.';
+      switch (e.code) {
+        case 'user-not-found':
+        case 'invalid-credential':
+          message = 'Incorrect email or password.';
+          break;
+        case 'wrong-password':
+          message = 'Incorrect password.';
+          break;
+        case 'invalid-email':
+          message = 'The email address format is invalid.';
+          break;
+        case 'user-disabled':
+          message = 'This user account has been disabled.';
+          break;
+        case 'too-many-requests':
+          message = 'Too many failed login attempts. Please try again later.';
+          break;
+        case 'network-request-failed':
+          message = 'Network error. Please check your internet connection.';
+          break;
+        default:
+          message = e.message ?? 'Authentication failed.';
       }
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red.shade700,
+            content: Text(message),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('An unexpected error occurred: $e')),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -70,7 +134,8 @@ class _LoginScreenState extends State<LoginScreen> {
       final userCredential =
           await FirebaseAuth.instance.signInWithCredential(credential);
 
-      if (userCredential.additionalUserInfo?.isNewUser == true) {
+      if (userCredential.additionalUserInfo?.isNewUser == true ||
+          userCredential.user != null) {
         await FirebaseFirestore.instance
             .collection('users')
             .doc(userCredential.user!.uid)
@@ -78,8 +143,8 @@ class _LoginScreenState extends State<LoginScreen> {
           'firstName': account.displayName ?? '',
           'email': account.email,
           'role': 'patient',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+          'lastLogin': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
 
       if (mounted) {
@@ -92,12 +157,26 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Google sign-in failed. Please try again.')),
+            content: Text('Google sign-in cancelled or failed. Please try again.'),
+          ),
         );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _onManagementNextTapped() {
+    // Management login path is currently on hold as requested
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: AppColors.primary400,
+        content: Text(
+          'Management portal login is currently on hold. Please log in as a patient above.',
+        ),
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
@@ -138,7 +217,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
+              const Text(
                 'Please log in to continue',
                 style: TextStyle(color: AppColors.gray400, fontSize: 13),
               ),
@@ -147,8 +226,9 @@ class _LoginScreenState extends State<LoginScreen> {
               // Email field
               _InputField(
                 controller: _emailController,
-                hint: 'Gmail',
+                hint: 'Email (Gmail)',
                 icon: Icons.mail_outline,
+                keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 14),
 
@@ -175,9 +255,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () {
-                    // TODO: navigate to Forgot Password screen
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ForgotPasswordScreen(
+                          initialEmail: _emailController.text.trim(),
+                        ),
+                      ),
+                    );
                   },
-                  child: Text(
+                  child: const Text(
                     'Forgot Password?',
                     style: TextStyle(color: AppColors.primary300),
                   ),
@@ -207,7 +293,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             strokeWidth: 2,
                           ),
                         )
-                      : const Text('Sign In'),
+                      : const Text('Sign In', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -227,12 +313,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       borderRadius: BorderRadius.circular(30),
                     ),
                   ),
-                  child: const Text('Sign Up'),
+                  child: const Text('Sign Up', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(height: 18),
 
-              _DividerWithText(text: 'OR'),
+              const _DividerWithText(text: 'OR'),
               const SizedBox(height: 18),
 
               // Google sign-in
@@ -244,7 +330,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: const Text('Continue with Google'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.gray600,
-                    side: BorderSide(color: AppColors.gray300),
+                    side: const BorderSide(color: AppColors.gray300),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(30),
@@ -254,25 +340,37 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 18),
 
-              _DividerWithText(text: 'As a Management'),
+              const _DividerWithText(text: 'As a Management'),
               const SizedBox(height: 18),
 
-              // Staff login
+              // Staff login (On Hold)
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
-                  onPressed: () {
-                    // TODO: navigate to Staff Login screen
-                  },
+                  onPressed: _onManagementNextTapped,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.primary400,
-                    side: BorderSide(color: AppColors.primary300),
+                    side: const BorderSide(color: AppColors.primary300),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(30),
                     ),
                   ),
-                  child: const Text('Next →'),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Text('Next →', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(width: 8),
+                      Text(
+                        '(On Hold)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.gray400,
+                          fontWeight: FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -289,6 +387,7 @@ class _InputField extends StatelessWidget {
   final IconData icon;
   final bool obscureText;
   final Widget? suffixIcon;
+  final TextInputType? keyboardType;
 
   const _InputField({
     required this.controller,
@@ -296,6 +395,7 @@ class _InputField extends StatelessWidget {
     required this.icon,
     this.obscureText = false,
     this.suffixIcon,
+    this.keyboardType,
   });
 
   @override
@@ -303,6 +403,7 @@ class _InputField extends StatelessWidget {
     return TextField(
       controller: controller,
       obscureText: obscureText,
+      keyboardType: keyboardType,
       decoration: InputDecoration(
         hintText: hint,
         prefixIcon: Icon(icon, color: AppColors.primary300),
@@ -327,12 +428,12 @@ class _DividerWithText extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: Divider(color: AppColors.gray300)),
+        const Expanded(child: Divider(color: AppColors.gray300)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Text(text, style: TextStyle(color: AppColors.gray400)),
+          child: Text(text, style: const TextStyle(color: AppColors.gray400)),
         ),
-        Expanded(child: Divider(color: AppColors.gray300)),
+        const Expanded(child: Divider(color: AppColors.gray300)),
       ],
     );
   }
