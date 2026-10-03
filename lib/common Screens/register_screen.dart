@@ -13,6 +13,7 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final _formKey = GlobalKey<FormState>();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _dobController = TextEditingController();
@@ -63,51 +64,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _dobController.text =
             '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
       });
+      // Trigger validation on date field once selected
+      _formKey.currentState?.validate();
     }
   }
 
   Future<void> _signUp() async {
+    // Validate all required fields
+    if (!_formKey.currentState!.validate()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Please correct the highlighted fields before proceeding.'),
+        ),
+      );
+      return;
+    }
+
     final firstName = _firstNameController.text.trim();
     final lastName = _lastNameController.text.trim();
     final dob = _dobController.text.trim();
-    final nic = _nicController.text.trim();
+    final nic = _nicController.text.trim().toUpperCase();
     final email = _emailController.text.trim();
     final contact = _contactController.text.trim();
     final password = _passwordController.text;
-    final confirmPassword = _confirmPasswordController.text;
-
-    // Field Validations
-    if (firstName.isEmpty ||
-        lastName.isEmpty ||
-        email.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all required fields.')),
-      );
-      return;
-    }
-
-    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid email address.')),
-      );
-      return;
-    }
-
-    if (password.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password must be at least 6 characters long.')),
-      );
-      return;
-    }
-
-    if (password != confirmPassword) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Passwords do not match.')),
-      );
-      return;
-    }
 
     setState(() => _isLoading = true);
     try {
@@ -141,7 +121,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => VerificationScreen(
-              contactNo: contact.isNotEmpty ? contact : '0712345678',
+              contactNo: contact,
+              email: email,
             ),
           ),
         );
@@ -191,154 +172,241 @@ class _RegisterScreenState extends State<RegisterScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Register Patient Account',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary500,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Create an account to book OPD appointments and track live hospital queues.',
-                style: TextStyle(fontSize: 12, color: AppColors.gray400),
-              ),
-              const SizedBox(height: 20),
-              _field(_firstNameController, 'First Name *'),
-              const SizedBox(height: 12),
-              _field(_lastNameController, 'Last Name *'),
-              const SizedBox(height: 12),
-              _field(
-                _dobController,
-                'DOB (DD/MM/YYYY)',
-                icon: Icons.calendar_today_outlined,
-                readOnly: true,
-                onTap: _selectDate,
-              ),
-              const SizedBox(height: 12),
-              _field(_nicController, 'NIC Number'),
-              const SizedBox(height: 12),
-              _field(
-                _emailController,
-                'Email (Gmail) *',
-                icon: Icons.mail_outline,
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                _contactController,
-                'Contact No',
-                icon: Icons.phone_outlined,
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                _passwordController,
-                'Password (min 6 characters) *',
-                icon: Icons.lock_outline,
-                obscureText: _obscurePassword,
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    color: AppColors.gray400,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Register Patient Account',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary500,
                   ),
-                  onPressed: () =>
-                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
-              ),
-              const SizedBox(height: 12),
-              _field(
-                _confirmPasswordController,
-                'Confirm Password *',
-                icon: Icons.lock_outline,
-                obscureText: _obscureConfirm,
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscureConfirm
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    color: AppColors.gray400,
-                  ),
-                  onPressed: () =>
-                      setState(() => _obscureConfirm = !_obscureConfirm),
+                const SizedBox(height: 6),
+                const Text(
+                  'All fields marked with * are required to register your patient account.',
+                  style: TextStyle(fontSize: 12, color: AppColors.gray400),
                 ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _signUp,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary400,
-                    foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+                const SizedBox(height: 20),
+                _formField(
+                  controller: _firstNameController,
+                  hint: 'First Name *',
+                  icon: Icons.person_outline,
+                  keyboardType: TextInputType.name,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'First name is required';
+                    if (v.length < 2) return 'First name must be at least 2 characters';
+                    if (!RegExp(r"^[a-zA-Z\s'-]+$").hasMatch(v)) {
+                      return 'Enter a valid name (letters only)';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _lastNameController,
+                  hint: 'Last Name *',
+                  icon: Icons.person_outline,
+                  keyboardType: TextInputType.name,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'Last name is required';
+                    if (v.length < 2) return 'Last name must be at least 2 characters';
+                    if (!RegExp(r"^[a-zA-Z\s'-]+$").hasMatch(v)) {
+                      return 'Enter a valid name (letters only)';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _dobController,
+                  hint: 'Date of Birth (DD/MM/YYYY) *',
+                  icon: Icons.calendar_today_outlined,
+                  readOnly: true,
+                  onTap: _selectDate,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'Date of birth is required';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _nicController,
+                  hint: 'NIC Number * (e.g. 199012345678 or 901234567V)',
+                  icon: Icons.badge_outlined,
+                  keyboardType: TextInputType.text,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'NIC number is required';
+                    if (!RegExp(r'^([0-9]{9}[vVxX]|[0-9]{12})$').hasMatch(v)) {
+                      return 'Invalid NIC. Use 9 digits+V/X (old) or 12 digits (new)';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _emailController,
+                  hint: 'Email (Gmail) *',
+                  icon: Icons.mail_outline,
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'Email is required';
+                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v)) {
+                      return 'Enter a valid email address (e.g. name@gmail.com)';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _contactController,
+                  hint: 'Contact No * (e.g. 0712345678)',
+                  icon: Icons.phone_outlined,
+                  keyboardType: TextInputType.phone,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'Contact number is required';
+                    if (!RegExp(r'^(?:0|\+?94)?7[0-9]{8}$').hasMatch(v)) {
+                      return 'Enter a valid Sri Lankan mobile number (e.g. 07XXXXXXXX)';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _passwordController,
+                  hint: 'Password (min 6 characters) *',
+                  icon: Icons.lock_outline,
+                  obscureText: _obscurePassword,
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: AppColors.gray400,
                     ),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
                   ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: AppColors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text('Sign Up', style: TextStyle(fontWeight: FontWeight.bold)),
+                  validator: (value) {
+                    final v = value ?? '';
+                    if (v.isEmpty) return 'Password is required';
+                    if (v.length < 6) return 'Password must be at least 6 characters';
+                    return null;
+                  },
                 ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary400,
-                    side: const BorderSide(color: AppColors.primary300),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+                const SizedBox(height: 12),
+                _formField(
+                  controller: _confirmPasswordController,
+                  hint: 'Confirm Password *',
+                  icon: Icons.lock_outline,
+                  obscureText: _obscureConfirm,
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscureConfirm
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: AppColors.gray400,
                     ),
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
                   ),
-                  child: const Text('Already have an account? Sign In'),
+                  validator: (value) {
+                    final v = value ?? '';
+                    if (v.isEmpty) return 'Please confirm your password';
+                    if (v != _passwordController.text) {
+                      return 'Passwords do not match';
+                    }
+                    return null;
+                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _signUp,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary400,
+                      foregroundColor: AppColors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: AppColors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text('Sign Up',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            )),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary400,
+                      side: const BorderSide(color: AppColors.primary300),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                    ),
+                    child: const Text('Already have an account? Sign In'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _field(
-    TextEditingController controller,
-    String hint, {
+  Widget _formField({
+    required TextEditingController controller,
+    required String hint,
     IconData? icon,
     bool obscureText = false,
     Widget? suffixIcon,
     TextInputType? keyboardType,
     bool readOnly = false,
     VoidCallback? onTap,
+    String? Function(String?)? validator,
   }) {
-    return TextField(
+    return TextFormField(
       controller: controller,
       obscureText: obscureText,
       keyboardType: keyboardType,
       readOnly: readOnly,
       onTap: onTap,
+      validator: validator,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
       decoration: InputDecoration(
         hintText: hint,
+        hintStyle: const TextStyle(fontSize: 13, color: AppColors.gray400),
         prefixIcon:
-            icon != null ? Icon(icon, color: AppColors.primary300) : null,
+            icon != null ? Icon(icon, color: AppColors.primary300, size: 20) : null,
         suffixIcon: suffixIcon,
         filled: true,
         fillColor: AppColors.white,
@@ -347,6 +415,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: AppColors.primary400, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+        ),
+        errorStyle: const TextStyle(fontSize: 11, height: 1.2),
       ),
     );
   }
