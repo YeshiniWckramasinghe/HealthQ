@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import 'verification_screen.dart';
+import 'staff_login_screen.dart';
 import '../Patient Management Screens/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -92,6 +93,37 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } on FirebaseAuthException catch (e) {
       debugPrint('AUTH ERROR CODE: ${e.code} — ${e.message}');
+
+      // Check if password was reset and saved in Firestore users collection
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        try {
+          final userSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .where('email', isEqualTo: email)
+              .limit(1)
+              .get();
+
+          if (userSnap.docs.isNotEmpty) {
+            final data = userSnap.docs.first.data();
+            final dbPass = data['password']?.toString();
+            if (dbPass != null && dbPass == password) {
+              await userSnap.docs.first.reference.set({
+                'lastLogin': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                );
+              }
+              return;
+            }
+          }
+        } catch (dbErr) {
+          debugPrint('Firestore fallback login check: $dbErr');
+        }
+      }
+
       String message = 'Login failed. Please try again.';
       switch (e.code) {
         case 'user-not-found':
@@ -496,15 +528,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _onManagementNextTapped() {
-    // Management login path is currently on hold as requested
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: AppColors.primary400,
-        content: Text(
-          'Management portal login is currently on hold. Please log in as a patient above.',
-        ),
-        duration: Duration(seconds: 3),
-      ),
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const StaffLoginScreen()),
     );
   }
 
@@ -682,7 +707,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const _DividerWithText(text: 'As a Management'),
               const SizedBox(height: 18),
 
-              // Staff login (On Hold)
+              // Staff login
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
@@ -698,15 +723,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: const [
-                      Text('Next →', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Icon(Icons.badge_outlined, size: 18),
                       SizedBox(width: 8),
                       Text(
-                        '(On Hold)',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppColors.gray400,
-                          fontWeight: FontWeight.normal,
-                        ),
+                        'Staff Portal Sign In →',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
                   ),

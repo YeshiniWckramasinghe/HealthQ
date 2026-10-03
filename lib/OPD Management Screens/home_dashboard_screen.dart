@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../common Screens/login_screen.dart';
 import 'opd_header_banner.dart';
 import 'opd_bottom_nav.dart';
 import 'patient_management_hub_screen.dart';
 import 'appointments_list_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
-  const HomeDashboardScreen({super.key});
+  final String? nurseName;
+  final String? nurseId;
+  final String? department;
+  final String? hospital;
+
+  const HomeDashboardScreen({
+    super.key,
+    this.nurseName,
+    this.nurseId,
+    this.department,
+    this.hospital,
+  });
 
   @override
   State<HomeDashboardScreen> createState() => _HomeDashboardScreenState();
@@ -51,11 +63,44 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       body: Column(
         children: [
           // Header banner with hospital corridor photo
-          const OpdHeaderBanner(
-            title: 'Good Morning, Nurse',
-            nurseId: 'ID: NUR1002-021',
-            department: 'General Medicine OPD',
-            hospital: 'Government Hospital — Colombo',
+          OpdHeaderBanner(
+            title: widget.nurseName != null && widget.nurseName!.isNotEmpty
+                ? 'Good Morning, ${widget.nurseName}'
+                : 'Good Morning, Nurse',
+            nurseId: widget.nurseId != null && widget.nurseId!.isNotEmpty
+                ? 'ID: ${widget.nurseId}'
+                : 'ID: NUR1002-0011',
+            department: widget.department ?? 'General Medicine OPD',
+            hospital: widget.hospital ?? 'Government Hospital — Colombo',
+            onAvatarTap: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Sign Out'),
+                  content: const Text('Are you sure you want to sign out of the Nurse Portal?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          (route) => false,
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: OpdColors.primary400,
+                        foregroundColor: OpdColors.white,
+                      ),
+                      child: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
 
           // Main body content
