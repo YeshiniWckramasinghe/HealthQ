@@ -102,17 +102,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 10),
-              Container(
-                width: 64,
-                height: 64,
-                decoration: const BoxDecoration(
-                  color: AppColors.primary300,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.lock_reset_outlined,
-                  color: AppColors.white,
-                  size: 32,
+              Center(
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary300,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lock_reset_outlined,
+                    color: AppColors.white,
+                    size: 32,
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
