@@ -6,17 +6,24 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import '../services/email_service.dart';
 import 'terms_screen.dart';
+import 'reset_password_screen.dart';
 
 enum VerificationType { mobile, email }
 
 class VerificationScreen extends StatefulWidget {
   final String contactNo;
   final String? email;
+  final String role; // 'doctor', 'nurse', or 'patient'
+  final Map<String, dynamic>? staffData;
+  final bool isPasswordReset;
 
   const VerificationScreen({
     super.key,
     required this.contactNo,
     this.email,
+    this.role = 'patient',
+    this.staffData,
+    this.isPasswordReset = false,
   });
 
   @override
@@ -36,6 +43,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
   // Phone Auth State
   String? _verificationId;
   int? _resendToken;
+
+  // Active generated OTP state for reliable instant verification
+  String? _activeGeneratedCode;
+  DateTime? _codeExpiresAt;
 
   // Loading & Error States
   bool _isSending = false;
@@ -163,6 +174,46 @@ class _VerificationScreenState extends State<VerificationScreen> {
       _errorMessage = null;
     });
 
+    final random = Random.secure();
+    final code = (100000 + random.nextInt(900000)).toString();
+    _activeGeneratedCode = code;
+    _codeExpiresAt = DateTime.now().add(const Duration(minutes: 15));
+
+    final staffId = widget.staffData?['staffId']?.toString();
+    if (staffId != null && staffId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+          'phoneVerificationCode': code,
+          'phoneVerificationExpires': Timestamp.fromDate(
+            DateTime.now().add(const Duration(minutes: 15)),
+          ),
+          'contactNo': _formattedPhone,
+        }, SetOptions(merge: true));
+      } catch (e) {
+        debugPrint('Staff mobile code store note: $e');
+      }
+
+      debugPrint('=====================================================');
+      debugPrint('📱 STAFF MOBILE OTP: $code (Staff: $staffId, Phone: $_formattedPhone)');
+      debugPrint('=====================================================');
+
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _errorMessage = null;
+        });
+        _startCooldown();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.primary400,
+            content: Text('Staff Verification Code: $code\nSent to SMS (${_maskedContact()})'),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       await FirebaseAuth.instance.verifyPhoneNumber(
         phoneNumber: _formattedPhone,
@@ -242,32 +293,56 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
     try {
       final user = FirebaseAuth.instance.currentUser;
+      final staffId = widget.staffData?['staffId']?.toString();
 
       // Generate secure 6-digit code
       final random = Random.secure();
       final code = (100000 + random.nextInt(900000)).toString();
 
-      // Store code in Cloud Firestore under users/{uid}
+      _activeGeneratedCode = code;
+      _codeExpiresAt = DateTime.now().add(const Duration(minutes: 15));
+
+      // Store code in Cloud Firestore under users/{uid} for patients
       if (user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'emailVerificationCode': code,
-          'emailVerificationExpires': Timestamp.fromDate(
-            DateTime.now().add(const Duration(minutes: 15)),
-          ),
-          'email': _targetEmail,
-        }, SetOptions(merge: true));
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'emailVerificationCode': code,
+            'emailVerificationExpires': Timestamp.fromDate(
+              DateTime.now().add(const Duration(minutes: 15)),
+            ),
+            'email': _targetEmail,
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving email code to users collection: $e');
+        }
+      }
+
+      // Store code in Cloud Firestore under staff/{staffId} for staff members
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'emailVerificationCode': code,
+            'emailVerificationExpires': Timestamp.fromDate(
+              DateTime.now().add(const Duration(minutes: 15)),
+            ),
+            'email': _targetEmail,
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving email code to staff collection: $e');
+        }
       }
 
       debugPrint('=====================================================');
       debugPrint('📤 SENDING OTP TO USER INPUT EMAIL: $_targetEmail');
       debugPrint('📧 SENDER HOSPITAL ACCOUNT: ${EmailService.smtpEmail}');
+      debugPrint('🔑 ACTIVE GENERATED VERIFICATION CODE: $code (Staff: $staffId)');
       debugPrint('=====================================================');
 
       // Send branded 6-digit OTP email directly to Gmail (no links)
       final emailResult = await EmailService.sendVerificationOtpEmail(
         recipientEmail: _targetEmail,
         code: code,
-        recipientName: user?.displayName,
+        recipientName: widget.staffData?['name'] ?? user?.displayName,
       );
 
       if (mounted) {
@@ -329,9 +404,25 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
   Future<void> _verifyEmailCode(String code) async {
     final user = FirebaseAuth.instance.currentUser;
+    final staffId = widget.staffData?['staffId']?.toString();
+    final cleanCode = code.trim();
     bool isValid = false;
 
-    if (user != null) {
+    // 1. Check in-memory generated code first (instant & reliable)
+    if (_activeGeneratedCode != null && _activeGeneratedCode == cleanCode) {
+      if (_codeExpiresAt == null || DateTime.now().isBefore(_codeExpiresAt!)) {
+        isValid = true;
+      } else {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Verification code has expired. Please request a new one.';
+        });
+        return;
+      }
+    }
+
+    // 2. Check Firestore 'users' collection (for patients)
+    if (!isValid && user != null) {
       try {
         final doc = await FirebaseFirestore.instance
             .collection('users')
@@ -340,10 +431,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
         if (doc.exists) {
           final data = doc.data();
-          final storedCode = data?['emailVerificationCode']?.toString();
+          final storedCode = data?['emailVerificationCode']?.toString().trim();
           final Timestamp? expires = data?['emailVerificationExpires'];
 
-          if (storedCode != null && storedCode == code) {
+          if (storedCode != null && storedCode == cleanCode) {
             if (expires == null || DateTime.now().isBefore(expires.toDate())) {
               isValid = true;
             } else {
@@ -356,19 +447,70 @@ class _VerificationScreenState extends State<VerificationScreen> {
           }
         }
       } catch (e) {
-        debugPrint('Error verifying email code: $e');
+        debugPrint('Error verifying email code from users doc: $e');
+      }
+    }
+
+    // 3. Check Firestore 'staff' collection (for doctor / nurse)
+    if (!isValid && staffId != null && staffId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('staff')
+            .doc(staffId)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          final storedCode = data?['emailVerificationCode']?.toString().trim();
+          final Timestamp? expires = data?['emailVerificationExpires'];
+
+          if (storedCode != null && storedCode == cleanCode) {
+            if (expires == null || DateTime.now().isBefore(expires.toDate())) {
+              isValid = true;
+            } else {
+              setState(() {
+                _isVerifying = false;
+                _errorMessage = 'Verification code has expired. Please request a new one.';
+              });
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error verifying email code from staff doc: $e');
       }
     }
 
     if (isValid) {
+      // Update patient in Firestore
       if (user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'email': _targetEmail,
-          'emailVerified': true,
-          'verifiedAt': FieldValue.serverTimestamp(),
-          'emailVerificationCode': FieldValue.delete(),
-        }, SetOptions(merge: true));
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'email': _targetEmail,
+            'emailVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'emailVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving verified status for user: $e');
+        }
       }
+
+      // Update staff in Firestore
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'email': _targetEmail,
+            'emailVerified': true,
+            'isVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'emailVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving verified status for staff: $e');
+        }
+      }
+
       if (mounted) {
         setState(() => _isVerifying = false);
         _proceedToTerms();
@@ -384,6 +526,82 @@ class _VerificationScreenState extends State<VerificationScreen> {
   }
 
   Future<void> _verifyMobileCode(String code) async {
+    final cleanCode = code.trim();
+    final staffId = widget.staffData?['staffId']?.toString();
+
+    // 1. Check in-memory generated code (staff and fallback)
+    if (_activeGeneratedCode != null && _activeGeneratedCode == cleanCode) {
+      if (_codeExpiresAt != null && DateTime.now().isAfter(_codeExpiresAt!)) {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Verification code has expired. Please request a new one.';
+        });
+        return;
+      }
+
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'contactNo': _formattedPhone,
+            'phoneVerified': true,
+            'isVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'phoneVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error updating staff phoneVerified: $e');
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isVerifying = false);
+        _proceedToTerms();
+      }
+      return;
+    }
+
+    // 2. Check Firestore 'staff' collection
+    if (staffId != null && staffId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('staff')
+            .doc(staffId)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          final storedCode = data?['phoneVerificationCode']?.toString().trim();
+          final Timestamp? expires = data?['phoneVerificationExpires'];
+
+          if (storedCode != null && storedCode == cleanCode) {
+            if (expires == null || DateTime.now().isBefore(expires.toDate())) {
+              await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+                'phoneVerified': true,
+                'isVerified': true,
+                'verifiedAt': FieldValue.serverTimestamp(),
+                'phoneVerificationCode': FieldValue.delete(),
+              }, SetOptions(merge: true));
+
+              if (mounted) {
+                setState(() => _isVerifying = false);
+                _proceedToTerms();
+              }
+              return;
+            } else {
+              setState(() {
+                _isVerifying = false;
+                _errorMessage = 'Verification code has expired. Please request a new one.';
+              });
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Staff mobile check error: $e');
+      }
+    }
+
+    // 3. Firebase Auth Phone verification (patients)
     if (_verificationId == null) {
       setState(() {
         _isVerifying = false;
@@ -395,7 +613,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
     try {
       final credential = PhoneAuthProvider.credential(
         verificationId: _verificationId!,
-        smsCode: code,
+        smsCode: cleanCode,
       );
       await _handleMobileAuthSuccess(credential);
     } on FirebaseAuthException catch (e) {
@@ -445,8 +663,27 @@ class _VerificationScreenState extends State<VerificationScreen> {
   }
 
   void _proceedToTerms() {
+    if (widget.isPasswordReset) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ResetPasswordScreen(
+            role: widget.role,
+            email: _targetEmail,
+            contactNo: _formattedPhone,
+            staffData: widget.staffData,
+          ),
+        ),
+      );
+      return;
+    }
+
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const TermsScreen()),
+      MaterialPageRoute(
+        builder: (_) => TermsScreen(
+          role: widget.role,
+          staffData: widget.staffData,
+        ),
+      ),
     );
   }
 
