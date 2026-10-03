@@ -7,14 +7,17 @@ class AppointmentsTab extends StatefulWidget {
   const AppointmentsTab({super.key, this.onBackToHome});
 
   @override
-  State<AppointmentsTab> createState() => _AppointmentsTabState();
+  State<AppointmentsTab> createState() => AppointmentsTabState();
 }
 
-class _AppointmentsTabState extends State<AppointmentsTab> {
+class AppointmentsTabState extends State<AppointmentsTab> {
   // 0 = hospital list, 1..3 = booking steps, 4 = history
   int _step = 0;
 
   void _go(int s) => setState(() => _step = s);
+
+  /// Lets other tabs (e.g. Profile) jump straight to the history list.
+  void showHistory() => _go(4);
 
   @override
   Widget build(BuildContext context) {
