@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../theme/app_colors.dart';
 import 'appointments_tab.dart';
+import '../Queue Management Screens/check_in_screen.dart';
 import '../common Screens/login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -14,7 +16,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
+
   Map<String, dynamic>? _userProfile;
+
+  int _nextQueueNumber = 12;
+
+  CheckInAppointment _currentAppointment = const CheckInAppointment(
+    appointmentId: '',
+    nic: '199012345678',
+    hospital: 'City General Hospital',
+    date: '22 Sep 2026',
+    session: 'Morning (9:00 - 12:00)',
+    doctor: 'Dr. S. Perera',
+    speciality: 'Internal Medicine',
+    patient: 'Patient',
+    contact: '',
+    dateOfBirth: '',
+    estimatedQueueNumber: '#12',
+  );
 
   @override
   void initState() {
@@ -24,17 +43,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchUserProfile() async {
     final user = FirebaseAuth.instance.currentUser;
+
     if (user != null) {
       try {
         final doc = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .get();
+
         if (mounted && doc.exists) {
           setState(() {
             _userProfile = doc.data();
           });
-          return;
         }
       } catch (e) {
         debugPrint('Error fetching user profile: $e');
@@ -47,7 +67,9 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Log Out'),
-        content: const Text('Are you sure you want to log out of HealthQ?'),
+        content: const Text(
+          'Are you sure you want to log out of HealthQ?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -56,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade700,
+              backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
             child: const Text('Log Out'),
@@ -67,12 +89,122 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirmed == true) {
       await FirebaseAuth.instance.signOut();
+
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          MaterialPageRoute(
+            builder: (_) => const LoginScreen(),
+          ),
           (route) => false,
         );
       }
+    }
+  }
+
+  void _goToHome() {
+    setState(() {
+      _index = 0;
+    });
+  }
+
+  void _goToAppointments() {
+    setState(() {
+      _index = 1;
+    });
+  }
+
+  void _goToCheckIn() {
+    setState(() {
+      _index = 2;
+    });
+  }
+
+  void _goToNotifications() {
+    setState(() {
+      _index = 3;
+    });
+  }
+
+  void _goToProfile() {
+    setState(() {
+      _index = 4;
+    });
+  }
+
+  String _generateQueueNumber() {
+    final number = _nextQueueNumber;
+    _nextQueueNumber++;
+
+    return '#$number';
+  }
+
+  CheckInAppointment _withGeneratedQueueNumber(
+    CheckInAppointment appointment,
+  ) {
+    return CheckInAppointment(
+      appointmentId: appointment.appointmentId,
+      nic: appointment.nic,
+      hospital: appointment.hospital,
+      date: appointment.date,
+      session: appointment.session,
+      doctor: appointment.doctor,
+      speciality: appointment.speciality,
+      patient: appointment.patient,
+      contact: appointment.contact,
+      dateOfBirth: appointment.dateOfBirth,
+      estimatedQueueNumber: _generateQueueNumber(),
+    );
+  }
+
+  // ---------------------------------------------------------------
+  // Bottom navigation selected index
+  //
+  // Internal indexes:
+  // 0 = Home
+  // 1 = Appointments
+  // 2 = Check In
+  // 3 = Notifications
+  // 4 = Profile
+  //
+  // Bottom bar only has:
+  // 0 = Home
+  // 1 = Appointments
+  // 2 = Notifications
+  // 3 = Profile
+  // ---------------------------------------------------------------
+
+  int get _bottomNavigationIndex {
+    switch (_index) {
+      case 1:
+        return 1;
+      case 3:
+        return 2;
+      case 4:
+        return 3;
+      case 2:
+      case 0:
+      default:
+        return 0;
+    }
+  }
+
+  void _onBottomNavigationTap(int selectedIndex) {
+    switch (selectedIndex) {
+      case 0:
+        _goToHome();
+        break;
+
+      case 1:
+        _goToAppointments();
+        break;
+
+      case 2:
+        _goToNotifications();
+        break;
+
+      case 3:
+        _goToProfile();
+        break;
     }
   }
 
@@ -80,24 +212,69 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.primary100,
+
       body: SafeArea(
         child: IndexedStack(
           index: _index,
           children: [
+            // =========================================================
+            // HOME
+            // =========================================================
             _HomeTab(
               userProfile: _userProfile,
-              onBook: () => setState(() => _index = 1),
-              onProfileTap: () => setState(() => _index = 3),
+              appointment: _currentAppointment,
+              onBook: _goToAppointments,
+              onCheckIn: _goToCheckIn,
+              onProfileTap: _goToProfile,
             ),
-            AppointmentsTab(onBackToHome: () => setState(() => _index = 0)),
+
+            // =========================================================
+            // APPOINTMENTS
+            // =========================================================
+            AppointmentsTab(
+              onBackToHome: _goToHome,
+              onAppointmentConfirmed: (appointment) {
+                final appointmentWithQueue =
+                    _withGeneratedQueueNumber(appointment);
+
+                setState(() {
+                  _currentAppointment = appointmentWithQueue;
+                  _index = 0;
+                });
+              },
+            ),
+
+            // =========================================================
+            // CHECK IN
+            // =========================================================
+            CheckInScreen(
+              bookedAppointment: _currentAppointment,
+              onCheckIn: (appointment) {
+                setState(() {
+                  _currentAppointment = appointment;
+                });
+              },
+            ),
+
+            // =========================================================
+            // NOTIFICATIONS
+            // =========================================================
             _buildNotificationsTab(),
+
+            // =========================================================
+            // PROFILE
+            // =========================================================
             _buildProfileTab(),
           ],
         ),
       ),
+
+      // =============================================================
+      // SAME BOTTOM NAVIGATION FOR HOME + CHECK-IN
+      // =============================================================
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        currentIndex: _bottomNavigationIndex,
+        onTap: _onBottomNavigationTap,
         type: BottomNavigationBarType.fixed,
         backgroundColor: AppColors.white,
         selectedItemColor: AppColors.primary300,
@@ -106,17 +283,33 @@ class _HomeScreenState extends State<HomeScreen> {
         unselectedFontSize: 11,
         items: const [
           BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined), label: 'Home'),
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: 'Home',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.calendar_today_outlined), label: 'Appointments'),
+            icon: Icon(Icons.calendar_today_outlined),
+            activeIcon: Icon(Icons.calendar_today),
+            label: 'Appointments',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.notifications_none), label: 'Notifications'),
+            icon: Icon(Icons.notifications_none),
+            activeIcon: Icon(Icons.notifications),
+            label: 'Notifications',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline), label: 'Profile'),
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Profile',
+          ),
         ],
       ),
     );
   }
+
+  // ===============================================================
+  // NOTIFICATIONS
+  // ===============================================================
 
   Widget _buildNotificationsTab() {
     return ListView(
@@ -169,7 +362,11 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: iconColor, size: 22),
+          Icon(
+            icon,
+            color: iconColor,
+            size: 22,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -195,7 +392,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 6),
                 Text(
                   time,
-                  style: const TextStyle(fontSize: 10, color: AppColors.gray400),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.gray400,
+                  ),
                 ),
               ],
             ),
@@ -205,16 +405,28 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ===============================================================
+  // PROFILE
+  // ===============================================================
+
   Widget _buildProfileTab() {
     final user = FirebaseAuth.instance.currentUser;
+
     final name = _userProfile?['fullName'] ??
         _userProfile?['firstName'] ??
         user?.displayName ??
         'Patient';
-    final email = _userProfile?['email'] ?? user?.email ?? 'No email';
+
+    final email =
+        _userProfile?['email'] ?? user?.email ?? 'No email';
+
     final nic = _userProfile?['nic'] ?? 'Not provided';
-    final contact = _userProfile?['contactNo'] ?? 'Not provided';
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'P';
+
+    final contact =
+        _userProfile?['contactNo'] ?? 'Not provided';
+
+    final initial =
+        name.isNotEmpty ? name[0].toUpperCase() : 'P';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -225,7 +437,9 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.gray100),
+              border: Border.all(
+                color: AppColors.gray100,
+              ),
             ),
             child: Column(
               children: [
@@ -253,16 +467,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 4),
                 Text(
                   email,
-                  style: const TextStyle(fontSize: 12, color: AppColors.gray400),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.gray400,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary100,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.primary200),
+                    border: Border.all(
+                      color: AppColors.primary200,
+                    ),
                   ),
                   child: const Text(
                     'Registered Patient',
@@ -277,37 +498,59 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
-
-          // Details List
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.gray100),
+              border: Border.all(
+                color: AppColors.gray100,
+              ),
             ),
             child: Column(
               children: [
-                _profileRow(Icons.badge_outlined, 'NIC Number', nic),
+                _profileRow(
+                  Icons.badge_outlined,
+                  'NIC Number',
+                  nic,
+                ),
                 const Divider(height: 20),
-                _profileRow(Icons.phone_outlined, 'Contact Number', contact),
+                _profileRow(
+                  Icons.phone_outlined,
+                  'Contact Number',
+                  contact,
+                ),
                 const Divider(height: 20),
-                _profileRow(Icons.email_outlined, 'Email Address', email),
+                _profileRow(
+                  Icons.email_outlined,
+                  'Email Address',
+                  email,
+                ),
               ],
             ),
           ),
           const SizedBox(height: 24),
-
-          // Log Out Button
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: _signOut,
-              icon: const Icon(Icons.logout, color: Colors.red),
-              label: const Text('Log Out', style: TextStyle(color: Colors.red)),
+              icon: const Icon(
+                Icons.logout,
+                color: Colors.red,
+              ),
+              label: const Text(
+                'Log Out',
+                style: TextStyle(
+                  color: Colors.red,
+                ),
+              ),
               style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.red.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: BorderSide(
+                  color: Colors.red.shade300,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(30),
                 ),
@@ -319,55 +562,84 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _profileRow(IconData icon, String label, String value) {
+  Widget _profileRow(
+    IconData icon,
+    String label,
+    String value,
+  ) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: AppColors.primary300),
+        Icon(
+          icon,
+          size: 20,
+          color: AppColors.primary300,
+        ),
         const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label,
-                style: const TextStyle(fontSize: 10, color: AppColors.gray400)),
-            const SizedBox(height: 2),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary500,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.gray400,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary500,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
 }
 
+// ===================================================================
+// HOME TAB
+// ===================================================================
+
 class _HomeTab extends StatelessWidget {
   final Map<String, dynamic>? userProfile;
+  final CheckInAppointment appointment;
   final VoidCallback onBook;
+  final VoidCallback onCheckIn;
   final VoidCallback onProfileTap;
 
   const _HomeTab({
     required this.userProfile,
+    required this.appointment,
     required this.onBook,
+    required this.onCheckIn,
     required this.onProfileTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
+
     final name = userProfile?['firstName'] ??
         user?.displayName?.split(' ').first ??
         'Patient';
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'P';
+
+    final initial =
+        name.isNotEmpty ? name[0].toUpperCase() : 'P';
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Header
+        // =========================================================
+        // HEADER
+        // =========================================================
+
         Row(
           children: [
             GestureDetector(
@@ -400,15 +672,18 @@ class _HomeTab extends StatelessWidget {
                   ),
                   const Text(
                     'HealthQ OPD Portal',
-                    style: TextStyle(fontSize: 11, color: AppColors.gray400),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.gray400,
+                    ),
                   ),
                 ],
               ),
             ),
-            CircleAvatar(
+            const CircleAvatar(
               radius: 18,
               backgroundColor: AppColors.white,
-              child: const Icon(
+              child: Icon(
                 Icons.notifications_none,
                 size: 20,
                 color: AppColors.primary500,
@@ -416,16 +691,23 @@ class _HomeTab extends StatelessWidget {
             ),
           ],
         ),
+
         const SizedBox(height: 16),
 
-        // Banner
+        // =========================================================
+        // BANNER
+        // =========================================================
+
         Container(
           height: 130,
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             gradient: const LinearGradient(
-              colors: [AppColors.primary400, AppColors.primary200],
+              colors: [
+                AppColors.primary400,
+                AppColors.primary200,
+              ],
             ),
           ),
           child: Column(
@@ -443,26 +725,34 @@ class _HomeTab extends StatelessWidget {
               Text(
                 'Get your health checked, join the queue number and consult today.',
                 style: TextStyle(
-                  color: AppColors.white.withValues(alpha: 0.85),
+                  color: AppColors.white.withValues(
+                    alpha: 0.85,
+                  ),
                   fontSize: 12,
                 ),
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.primary300,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Text(
                   'Announcements',
-                  style: TextStyle(color: AppColors.white, fontSize: 11),
+                  style: TextStyle(
+                    color: AppColors.white,
+                    fontSize: 11,
+                  ),
                 ),
               ),
             ],
           ),
         ),
+
         const SizedBox(height: 18),
 
         const Text(
@@ -473,9 +763,13 @@ class _HomeTab extends StatelessWidget {
             color: AppColors.gray400,
           ),
         ),
+
         const SizedBox(height: 8),
 
-        // Upcoming appointment card
+        // =========================================================
+        // UPCOMING APPOINTMENT CARD
+        // =========================================================
+
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -487,50 +781,88 @@ class _HomeTab extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'City General Hospital',
-                      style: TextStyle(
+                      appointment.hospital,
+                      style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
                         color: AppColors.primary500,
                       ),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary300,
+
+                  // =================================================
+                  // QUEUE BUTTON
+                  // =================================================
+
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: onCheckIn,
                       borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'Queue #12',
-                      style: TextStyle(
-                        color: AppColors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary300,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Queue ${appointment.estimatedQueueNumber}',
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ],
               ),
-              const Text('Dr. Aris Silva — General OPD',
-                  style: TextStyle(fontSize: 12, color: AppColors.gray400)),
+
+              Text(
+                '${appointment.doctor} — ${appointment.speciality}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.gray400,
+                ),
+              ),
+
               const Divider(height: 24),
+
               Row(
-                children: const [
-                  Icon(Icons.access_time, size: 16, color: AppColors.primary300),
-                  SizedBox(width: 6),
-                  Text('Today, 10:30 AM',
-                      style:
-                          TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  Spacer(),
-                  Text('Est. Wait: 25 mins',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray400)),
+                children: [
+                  const Icon(
+                    Icons.access_time,
+                    size: 16,
+                    color: AppColors.primary300,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${appointment.date} · ${appointment.session}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const Text(
+                    'Est. Wait: 25 mins',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.gray400,
+                    ),
+                  ),
                 ],
               ),
+
               const SizedBox(height: 8),
+
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: const LinearProgressIndicator(
@@ -540,41 +872,70 @@ class _HomeTab extends StatelessWidget {
                   color: AppColors.primary300,
                 ),
               ),
+
               const SizedBox(height: 6),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Text('Consultation in progress',
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary400)),
-                  Text('Next slot',
-                      style:
-                          TextStyle(fontSize: 10, color: AppColors.gray400)),
+
+              const Row(
+                mainAxisAlignment:
+                    MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Consultation in progress',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary400,
+                    ),
+                  ),
+                  Text(
+                    'Next slot',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.gray400,
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
         ),
+
         const SizedBox(height: 16),
 
-        // Quick actions
+        // =========================================================
+        // QUICK ACTIONS
+        // =========================================================
+
         Row(
           children: [
-            _action(Icons.local_hospital_outlined, 'Find\nHospital', onBook),
+            _action(
+              Icons.local_hospital_outlined,
+              'Find\nHospital',
+              onBook,
+            ),
             const SizedBox(width: 10),
             _action(
-                Icons.event_available_outlined, 'Book\nAppointment', onBook),
+              Icons.event_available_outlined,
+              'Book\nAppointment',
+              onBook,
+            ),
             const SizedBox(width: 10),
-            _action(Icons.folder_open_outlined, 'My\nAppointments', onBook),
+            _action(
+              Icons.folder_open_outlined,
+              'My\nAppointments',
+              onBook,
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _action(IconData icon, String label, VoidCallback onTap) {
+  Widget _action(
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -584,12 +945,17 @@ class _HomeTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary300),
+            border: Border.all(
+              color: AppColors.primary300,
+            ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: AppColors.primary300),
+              Icon(
+                icon,
+                color: AppColors.primary300,
+              ),
               const SizedBox(height: 6),
               Text(
                 label,

@@ -7,7 +7,8 @@ class AppColors {
   static const Color primary300 = Color(0xFF007471);
   static const Color primary400 = Color(0xFF00615D);
   static const Color primary500 = Color(0xFF063A37);
-
+  static const Color primary900 = primary500;
+  
   // Status Badge Colors
   // Waiting (Amber / Orange)
   static const Color statusWaitingBg = Color(0xFFFEF3C7);
