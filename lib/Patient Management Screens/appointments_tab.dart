@@ -1,6 +1,76 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
+const Map<String, Map<String, List<String>>> _locations = {
+  'Western Province': {
+    'Colombo': ['Colombo', 'Dehiwala-Mount Lavinia', 'Sri Jayawardenepura Kotte', 'Moratuwa'],
+    'Gampaha': ['Gampaha', 'Negombo', 'Wattala', 'Ja-Ela', 'Katunayake', 'Minuwangoda'],
+    'Kalutara': ['Kalutara', 'Panadura', 'Beruwala', 'Horana'],
+  },
+  'Central Province': {
+    'Kandy': ['Kandy', 'Peradeniya', 'Katugastota'],
+    'Matale': ['Matale', 'Dambulla', 'Galewela'],
+    'Nuwara Eliya': ['Nuwara Eliya', 'Hatton', 'Talawakele'],
+  },
+  'Southern Province': {
+    'Galle': ['Galle', 'Hikkaduwa', 'Ambalangoda'],
+    'Matara': ['Matara', 'Weligama', 'Akuressa'],
+    'Hambantota': ['Hambantota', 'Tangalle', 'Tissamaharama'],
+  },
+  'Northern Province': {
+    'Jaffna': ['Jaffna', 'Chavakachcheri'],
+    'Kilinochchi': ['Kilinochchi'],
+    'Mannar': ['Mannar'],
+    'Mullaitivu': ['Mullaitivu'],
+    'Vavuniya': ['Vavuniya'],
+  },
+  'Eastern Province': {
+    'Batticaloa': ['Batticaloa', 'Eravur'],
+    'Ampara': ['Ampara', 'Kalmunai', 'Akkaraipattu'],
+    'Trincomalee': ['Trincomalee', 'Kinniya'],
+  },
+  'North Western Province': {
+    'Kurunegala': ['Kurunegala', 'Kuliyapitiya', 'Narammala'],
+    'Puttalam': ['Puttalam', 'Chilaw', 'Wennappuwa'],
+  },
+  'North Central Province': {
+    'Anuradhapura': ['Anuradhapura'],
+    'Polonnaruwa': ['Polonnaruwa', 'Hingurakgoda'],
+  },
+  'Uva Province': {
+    'Badulla': ['Badulla', 'Bandarawela', 'Haputale'],
+    'Monaragala': ['Monaragala', 'Wellawaya'],
+  },
+  'Sabaragamuwa Province': {
+    'Ratnapura': ['Ratnapura', 'Balangoda', 'Embilipitiya'],
+    'Kegalle': ['Kegalle', 'Mawanella', 'Warakapola'],
+  },
+};
+
+// name, status, status colour, province, district, city  (sample data)
+const List<(String, String, Color, String, String, String)> _hospitalData = [
+  ('City General Hospital', 'OPD Open', Colors.green, 'Western Province', 'Colombo', 'Colombo'),
+  ('District Hospital', 'Full', Colors.red, 'Western Province', 'Gampaha', 'Negombo'),
+  ('Teaching Hospital', '3 slots left', Colors.orange, 'Central Province', 'Kandy', 'Kandy'),
+  ('Karapitiya Hospital', 'OPD Open', Colors.green, 'Southern Province', 'Galle', 'Galle'),
+  ('Jaffna Base Hospital', '5 slots left', Colors.orange, 'Northern Province', 'Jaffna', 'Jaffna'),
+  ('Kurunegala Hospital', 'OPD Open', Colors.green, 'North Western Province', 'Kurunegala', 'Kurunegala'),
+];
+
+// name, speciality, patients waiting (sample data)
+const List<(String, String, int)> _doctorData = [
+  ('Dr. S. Perera', 'Internal Medicine', 8),
+  ('Dr. R. Fernando', 'General Surgery', 14),
+  ('Dr. M. Silva', 'Paediatrics', 3),
+];
+
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const _sessions = {
+  'Morning': '9:00 - 12:00',
+  'Afternoon': '1:00 - 4:00',
+  'Evening': '4:00 - 7:00',
+};
+
 class AppointmentsTab extends StatefulWidget {
   /// Called when the user taps "Back to Home" on the confirmation screen.
   final VoidCallback? onBackToHome;
@@ -13,6 +83,95 @@ class AppointmentsTab extends StatefulWidget {
 class AppointmentsTabState extends State<AppointmentsTab> {
   // 0 = hospital list, 1..3 = booking steps, 4 = history
   int _step = 0;
+
+  // hospital filters
+  String? _province, _district, _city;
+  String _query = '';
+
+  // booking selections
+  String? _hospital;
+  int? _doctorIdx;
+  String _doctorQuery = '';
+  DateTime _date = DateTime.now().add(const Duration(days: 1));
+  String _session = 'Morning';
+
+  // patient details (step 2)
+  final _nic = TextEditingController();
+  final _name = TextEditingController();
+  final _contact = TextEditingController();
+  DateTime? _dob;
+  bool _showErrors = false;
+
+  String? get _nicError =>
+      RegExp(r'^(\d{9}[vVxX]|\d{12})$').hasMatch(_nic.text.trim())
+          ? null
+          : 'Enter a valid NIC (9 digits + V, or 12 digits)';
+  String? get _nameError =>
+      _name.text.trim().length < 3 ? 'Enter the full name' : null;
+  String? get _dobError => _dob == null ? 'Select the date of birth' : null;
+  String? get _contactError =>
+      RegExp(r'^(\+94|0)?7\d{8}$').hasMatch(_contact.text.replaceAll(' ', ''))
+          ? null
+          : 'Enter a valid mobile number (e.g. 0712345678)';
+
+  void _submitPatient() {
+    setState(() => _showErrors = true);
+    if (_nicError == null &&
+        _nameError == null &&
+        _dobError == null &&
+        _contactError == null) {
+      _go(3);
+    }
+  }
+
+  Future<void> _pickDob() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _dob ?? DateTime(1990),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (d != null) setState(() => _dob = d);
+  }
+
+  @override
+  void dispose() {
+    _nic.dispose();
+    _name.dispose();
+    _contact.dispose();
+    super.dispose();
+  }
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+  String get _dateLabel => '${_two(_date.day)} ${_months[_date.month - 1]} ${_date.year}';
+  String get _dateIso => '${_date.year}-${_two(_date.month)}-${_two(_date.day)}';
+  String get _queueNo => '#${_two(_doctorData[_doctorIdx ?? 0].$3 + 1)}';
+
+  void _snack(String m) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(m)));
+
+  void _resetBooking() => setState(() {
+        _hospital = null;
+        _doctorIdx = null;
+        _doctorQuery = '';
+        _session = 'Morning';
+        _nic.clear();
+        _name.clear();
+        _contact.clear();
+        _dob = null;
+        _showErrors = false;
+      });
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 60)),
+    );
+    if (d != null) setState(() => _date = d);
+  }
 
   void _go(int s) => setState(() => _step = s);
 
@@ -30,179 +189,304 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Screen 2: hospital list ----------
   Widget _hospitals() {
-    const items = [
-      ('City General Hospital', 'OPD Open', Colors.green),
-      ('District Hospital', 'Full', Colors.red),
-      ('Teaching Hospital', '3 slots left', Colors.orange),
-    ];
+    final q = _query.trim().toLowerCase();
+    final list = _hospitalData
+        .where((h) =>
+            (_province == null || h.$4 == _province) &&
+            (_district == null || h.$5 == _district) &&
+            (_city == null || h.$6 == _city) &&
+            h.$1.toLowerCase().contains(q))
+        .toList();
+    final districts = _locations[_province]?.keys.toList() ?? <String>[];
+    final cities = _locations[_province]?[_district] ?? <String>[];
+    final hasFilter = _province != null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header('Appointment Booking'),
         const SizedBox(height: 12),
-        _search(),
+        _search((v) => setState(() => _query = v)),
         const SizedBox(height: 14),
-        _label('HOSPITAL DETAILS'),
         Row(
           children: [
-            Expanded(child: _dropdown('Province')),
+            _label('HOSPITAL DETAILS'),
+            const Spacer(),
+            if (hasFilter)
+              GestureDetector(
+                onTap: () => setState(() {
+                  _province = null;
+                  _district = null;
+                  _city = null;
+                }),
+                child: const Text('Clear',
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary300)),
+              ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _drop(
+                hint: 'Province',
+                value: _province,
+                items: _locations.keys.toList(),
+                onChanged: (v) => setState(() {
+                  _province = v;
+                  _district = null;
+                  _city = null;
+                }),
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: _dropdown('District')),
+            Expanded(
+              child: _drop(
+                hint: 'District',
+                value: _district,
+                items: districts,
+                onChanged: (v) => setState(() {
+                  _district = v;
+                  _city = null;
+                }),
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: _dropdown('City')),
+            Expanded(
+              child: _drop(
+                hint: 'City',
+                value: _city,
+                items: cities,
+                onChanged: (v) => setState(() => _city = v),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 14),
         _label('HOSPITAL AVAILABILITY'),
         Expanded(
-          child: ListView(
-            children: [
-              for (final h in items)
-                _card(
-                  onTap: () => _go(1),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary100,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Icon(Icons.local_hospital_outlined,
-                            size: 16, color: AppColors.primary300),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+          child: list.isEmpty
+              ? const Center(
+                  child: Text('No hospitals found',
+                      style: TextStyle(fontSize: 12, color: AppColors.gray400)))
+              : ListView(
+                  children: [
+                    for (final h in list)
+                      _card(
+                        selected: _hospital == h.$1,
+                        onTap: () {
+                          if (h.$2 == 'Full') {
+                            _snack('This hospital OPD is full');
+                            return;
+                          }
+                          setState(() => _hospital = h.$1);
+                        },
+                        child: Row(
                           children: [
-                            Text(h.$1,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primary500)),
-                            Row(
-                              children: [
-                                Icon(Icons.circle, size: 8, color: h.$3),
-                                const SizedBox(width: 4),
-                                Text(h.$2,
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: AppColors.gray400)),
-                              ],
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary100,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Icon(Icons.local_hospital_outlined,
+                                  size: 16, color: AppColors.primary300),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(h.$1,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.primary500)),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.circle, size: 8, color: h.$3),
+                                      const SizedBox(width: 4),
+                                      Text(h.$2,
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: AppColors.gray400)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              _hospital == h.$1
+                                  ? Icons.check_circle
+                                  : Icons.chevron_right,
+                              color: _hospital == h.$1
+                                  ? AppColors.primary300
+                                  : AppColors.gray400,
                             ),
                           ],
                         ),
                       ),
-                      const Icon(Icons.chevron_right, color: AppColors.gray400),
-                    ],
-                  ),
+                  ],
                 ),
-            ],
-          ),
         ),
-        _primaryBtn('Book Appointment', () => _go(1)),
+        _primaryBtn('Book Appointment', () {
+          if (_hospital == null) {
+            _snack('Please select a hospital');
+            return;
+          }
+          _go(1);
+        }),
       ],
     );
   }
 
   // ---------- Screen 3: step 1 ----------
   Widget _details() {
-    const doctors = [
-      ('Dr. S. Perera', 'Internal Medicine', '8 waiting'),
-      ('Dr. R. Fernando', 'General Surgery', '14 waiting'),
-      ('Dr. M. Silva', 'Paediatrics', '3 waiting'),
+    final q = _doctorQuery.trim().toLowerCase();
+    final docs = [
+      for (var i = 0; i < _doctorData.length; i++)
+        if (_doctorData[i].$1.toLowerCase().contains(q) ||
+            _doctorData[i].$2.toLowerCase().contains(q))
+          i,
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header('Appointment Booking', step: '1 / 3'),
         const SizedBox(height: 12),
-        _search(),
+        _search((v) => setState(() => _doctorQuery = v),
+            hint: 'Search doctor, speciality...'),
         const SizedBox(height: 14),
         _label('APPOINTMENT DETAILS'),
-        _field('City General Hospital', trailing: Icons.keyboard_arrow_down),
+        _field(_hospital ?? 'Select hospital',
+            trailing: Icons.keyboard_arrow_down, onTap: () => _go(0)),
         const SizedBox(height: 8),
-        _field('22 Sep 2026', leading: Icons.calendar_today_outlined),
+        _field(_dateLabel, leading: Icons.calendar_today_outlined, onTap: _pickDate),
         const SizedBox(height: 8),
-        _field('Morning', trailing: Icons.keyboard_arrow_down),
+        _drop(
+          hint: 'Session',
+          value: _session,
+          items: _sessions.keys.toList(),
+          onChanged: (v) => setState(() => _session = v ?? _session),
+          bordered: true,
+        ),
         const SizedBox(height: 14),
         _label('DOCTOR AVAILABILITY & QUEUE'),
         Expanded(
-          child: ListView(
-            children: [
-              for (final d in doctors)
-                _card(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+          child: docs.isEmpty
+              ? const Center(
+                  child: Text('No doctors found',
+                      style: TextStyle(fontSize: 12, color: AppColors.gray400)))
+              : ListView(
+                  children: [
+                    for (final i in docs)
+                      _card(
+                        selected: _doctorIdx == i,
+                        onTap: () => setState(() => _doctorIdx = i),
+                        child: Row(
                           children: [
-                            Text(d.$1,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primary500)),
-                            Text(d.$2,
-                                style: const TextStyle(
-                                    fontSize: 11, color: AppColors.gray400)),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_doctorData[i].$1,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.primary500)),
+                                  Text(_doctorData[i].$2,
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.gray400)),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary100,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text('${_doctorData[i].$3} waiting',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary400)),
+                            ),
                           ],
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary100,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(d.$3,
-                            style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.primary400)),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
-            ],
-          ),
         ),
-        _primaryBtn('Next', () => _go(2)),
+        _primaryBtn('Next', () {
+          if (_hospital == null) {
+            _snack('Please select a hospital');
+            return;
+          }
+          if (_doctorIdx == null) {
+            _snack('Please select a doctor');
+            return;
+          }
+          _go(2);
+        }),
       ],
     );
   }
 
   // ---------- Screen 4: step 2 ----------
   Widget _patient() {
+    final dobText = _dob == null
+        ? 'Date of birth'
+        : '${_two(_dob!.day)} ${_months[_dob!.month - 1]} ${_dob!.year}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header('Appointment Booking', step: '2 / 3'),
         const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            height: 130,
-            width: double.infinity,
-            color: AppColors.primary200.withValues(alpha: 0.3),
-            // Replace with Image.asset('assets/images/onboard_1.jpg', fit: BoxFit.cover)
-            child: const Icon(Icons.medical_services_outlined,
-                size: 48, color: AppColors.primary300),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    height: 130,
+                    width: double.infinity,
+                    color: AppColors.primary200.withValues(alpha: 0.3),
+                    // Replace with Image.asset('assets/images/onboard_1.jpg', fit: BoxFit.cover)
+                    child: const Icon(Icons.medical_services_outlined,
+                        size: 48, color: AppColors.primary300),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _label('PATIENT DETAILS'),
+                _input('NIC number', _nic, _nicError),
+                const SizedBox(height: 8),
+                _input('Full name', _name, _nameError),
+                const SizedBox(height: 8),
+                _field(dobText,
+                    leading: Icons.calendar_today_outlined, onTap: _pickDob),
+                if (_showErrors && _dobError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, top: 4),
+                    child: Text(_dobError!,
+                        style: const TextStyle(
+                            fontSize: 10, color: Colors.redAccent)),
+                  ),
+                const SizedBox(height: 8),
+                _input('Contact number', _contact, _contactError,
+                    keyboard: TextInputType.phone),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 14),
-        _label('PATIENT DETAILS'),
-        _input('NIC number'),
-        const SizedBox(height: 8),
-        _input('Full name'),
-        const SizedBox(height: 8),
-        _input('Date of birth'),
-        const SizedBox(height: 8),
-        _input('Contact number', keyboard: TextInputType.phone),
-        const Spacer(),
-        _primaryBtn('Next', () => _go(3)),
+        const SizedBox(height: 10),
+        _primaryBtn('Next', _submitPatient),
         const SizedBox(height: 8),
         _outlineBtn('Back', () => _go(1)),
       ],
@@ -225,15 +509,15 @@ class AppointmentsTabState extends State<AppointmentsTab> {
           ),
           child: Column(
             children: [
-              _row('Hospital', 'City General Hospital'),
-              _row('Date', '2026-09-22'),
-              _row('Session', 'Morning (9:00 - 12:00)'),
-              _row('Doctor', 'Dr. S. Perera'),
-              _row('Speciality', 'Internal Medicine'),
-              _row('Patient', 'Kasun Perera'),
-              _row('NIC', '199012345678'),
-              _row('Contact', '+94 71 234 5678'),
-              _row('Est. Queue No.', '#09', highlight: true),
+              _row('Hospital', _hospital ?? '-'),
+              _row('Date', _dateIso),
+              _row('Session', '$_session (${_sessions[_session]})'),
+              _row('Doctor', _doctorData[_doctorIdx ?? 0].$1),
+              _row('Speciality', _doctorData[_doctorIdx ?? 0].$2),
+              _row('Patient', _name.text.trim()),
+              _row('NIC', _nic.text.trim().toUpperCase()),
+              _row('Contact', _contact.text.trim()),
+              _row('Est. Queue No.', _queueNo, highlight: true),
             ],
           ),
         ),
@@ -250,14 +534,16 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _ConfirmedScreen(
-          queue: '#09',
-          summary: 'City General Hospital · 22 Sep 2026',
+          queue: _queueNo,
+          summary: '${_hospital ?? ''} · $_dateLabel',
           onViewAppointments: () {
             Navigator.of(context).pop();
+            _resetBooking();
             _go(4);
           },
           onBackToHome: () {
             Navigator.of(context).pop();
+            _resetBooking();
             _go(0);
             widget.onBackToHome?.call();
           },
@@ -395,9 +681,13 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                 color: AppColors.gray400)),
       );
 
-  Widget _search() => TextField(
+  Widget _search(ValueChanged<String> onChanged,
+          {String hint = 'Search clinic, hospital...'}) =>
+      TextField(
+        onChanged: onChanged,
+        style: const TextStyle(fontSize: 12),
         decoration: InputDecoration(
-          hintText: 'Search clinic, hospital...',
+          hintText: hint,
           hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
           prefixIcon: const Icon(Icons.search, size: 18),
           filled: true,
@@ -414,55 +704,90 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         ),
       );
 
-  Widget _dropdown(String t) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.gray100),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-                child: Text(t,
-                    style: const TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.bold))),
-            const Icon(Icons.arrow_downward, size: 12),
-          ],
-        ),
-      );
-
-  Widget _field(String t, {IconData? leading, IconData? trailing}) =>
+  Widget _drop({
+    required String hint,
+    required String? value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+    bool bordered = false,
+  }) =>
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        padding: EdgeInsets.symmetric(horizontal: bordered ? 12 : 8),
         decoration: BoxDecoration(
           color: AppColors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.primary300),
+          borderRadius: BorderRadius.circular(bordered ? 10 : 8),
+          border: Border.all(
+              color: bordered ? AppColors.primary300 : AppColors.gray100),
         ),
-        child: Row(
-          children: [
-            if (leading != null) ...[
-              Icon(leading, size: 16, color: AppColors.primary300),
-              const SizedBox(width: 8),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: value,
+            isExpanded: true,
+            itemHeight: 48,
+            hint: Text(hint,
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.gray400)),
+            icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+            style: TextStyle(
+                fontSize: bordered ? 12 : 11,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary500),
+            items: [
+              for (final i in items)
+                DropdownMenuItem(
+                    value: i, child: Text(i, overflow: TextOverflow.ellipsis)),
             ],
-            Expanded(
-                child: Text(t,
-                    style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary500))),
-            if (trailing != null) Icon(trailing, size: 18),
-          ],
+            onChanged: items.isEmpty ? null : onChanged,
+          ),
         ),
       );
 
-  Widget _input(String hint, {TextInputType? keyboard}) => TextField(
+  Widget _field(String t,
+          {IconData? leading, IconData? trailing, VoidCallback? onTap}) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          decoration: BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.primary300),
+          ),
+          child: Row(
+            children: [
+              if (leading != null) ...[
+                Icon(leading, size: 16, color: AppColors.primary300),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                  child: Text(t,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary500))),
+              if (trailing != null) Icon(trailing, size: 18),
+            ],
+          ),
+        ),
+      );
+
+  Widget _input(String hint, TextEditingController controller, String? error,
+          {TextInputType? keyboard}) =>
+      TextField(
+        controller: controller,
         keyboardType: keyboard,
         style: const TextStyle(fontSize: 12),
+        onChanged: (_) {
+          if (_showErrors) setState(() {});
+        },
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
+          errorText: _showErrors ? error : null,
+          errorStyle: const TextStyle(fontSize: 10),
           filled: true,
           fillColor: AppColors.white,
           contentPadding:
@@ -478,7 +803,8 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         ),
       );
 
-  Widget _card({required Widget child, VoidCallback? onTap}) => Padding(
+  Widget _card(
+          {required Widget child, VoidCallback? onTap, bool selected = false}) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: InkWell(
           onTap: onTap,
@@ -488,7 +814,9 @@ class AppointmentsTabState extends State<AppointmentsTab> {
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.gray100),
+              border: Border.all(
+                  color: selected ? AppColors.primary300 : AppColors.gray100,
+                  width: selected ? 1.5 : 1),
             ),
             child: child,
           ),
