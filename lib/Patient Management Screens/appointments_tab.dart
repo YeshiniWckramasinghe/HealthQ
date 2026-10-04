@@ -95,6 +95,53 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   DateTime _date = DateTime.now().add(const Duration(days: 1));
   String _session = 'Morning';
 
+  // patient details (step 2)
+  final _nic = TextEditingController();
+  final _name = TextEditingController();
+  final _contact = TextEditingController();
+  DateTime? _dob;
+  bool _showErrors = false;
+
+  String? get _nicError =>
+      RegExp(r'^(\d{9}[vVxX]|\d{12})$').hasMatch(_nic.text.trim())
+          ? null
+          : 'Enter a valid NIC (9 digits + V, or 12 digits)';
+  String? get _nameError =>
+      _name.text.trim().length < 3 ? 'Enter the full name' : null;
+  String? get _dobError => _dob == null ? 'Select the date of birth' : null;
+  String? get _contactError =>
+      RegExp(r'^(\+94|0)?7\d{8}$').hasMatch(_contact.text.replaceAll(' ', ''))
+          ? null
+          : 'Enter a valid mobile number (e.g. 0712345678)';
+
+  void _submitPatient() {
+    setState(() => _showErrors = true);
+    if (_nicError == null &&
+        _nameError == null &&
+        _dobError == null &&
+        _contactError == null) {
+      _go(3);
+    }
+  }
+
+  Future<void> _pickDob() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _dob ?? DateTime(1990),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (d != null) setState(() => _dob = d);
+  }
+
+  @override
+  void dispose() {
+    _nic.dispose();
+    _name.dispose();
+    _contact.dispose();
+    super.dispose();
+  }
+
   String _two(int n) => n.toString().padLeft(2, '0');
   String get _dateLabel => '${_two(_date.day)} ${_months[_date.month - 1]} ${_date.year}';
   String get _dateIso => '${_date.year}-${_two(_date.month)}-${_two(_date.day)}';
@@ -108,6 +155,11 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         _doctorIdx = null;
         _doctorQuery = '';
         _session = 'Morning';
+        _nic.clear();
+        _name.clear();
+        _contact.clear();
+        _dob = null;
+        _showErrors = false;
       });
 
   Future<void> _pickDate() async {
@@ -387,33 +439,54 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Screen 4: step 2 ----------
   Widget _patient() {
+    final dobText = _dob == null
+        ? 'Date of birth'
+        : '${_two(_dob!.day)} ${_months[_dob!.month - 1]} ${_dob!.year}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header('Appointment Booking', step: '2 / 3'),
         const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            height: 130,
-            width: double.infinity,
-            color: AppColors.primary200.withValues(alpha: 0.3),
-            // Replace with Image.asset('assets/images/onboard_1.jpg', fit: BoxFit.cover)
-            child: const Icon(Icons.medical_services_outlined,
-                size: 48, color: AppColors.primary300),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    height: 130,
+                    width: double.infinity,
+                    color: AppColors.primary200.withValues(alpha: 0.3),
+                    // Replace with Image.asset('assets/images/onboard_1.jpg', fit: BoxFit.cover)
+                    child: const Icon(Icons.medical_services_outlined,
+                        size: 48, color: AppColors.primary300),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _label('PATIENT DETAILS'),
+                _input('NIC number', _nic, _nicError),
+                const SizedBox(height: 8),
+                _input('Full name', _name, _nameError),
+                const SizedBox(height: 8),
+                _field(dobText,
+                    leading: Icons.calendar_today_outlined, onTap: _pickDob),
+                if (_showErrors && _dobError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, top: 4),
+                    child: Text(_dobError!,
+                        style: const TextStyle(
+                            fontSize: 10, color: Colors.redAccent)),
+                  ),
+                const SizedBox(height: 8),
+                _input('Contact number', _contact, _contactError,
+                    keyboard: TextInputType.phone),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 14),
-        _label('PATIENT DETAILS'),
-        _input('NIC number'),
-        const SizedBox(height: 8),
-        _input('Full name'),
-        const SizedBox(height: 8),
-        _input('Date of birth'),
-        const SizedBox(height: 8),
-        _input('Contact number', keyboard: TextInputType.phone),
-        const Spacer(),
-        _primaryBtn('Next', () => _go(3)),
+        const SizedBox(height: 10),
+        _primaryBtn('Next', _submitPatient),
         const SizedBox(height: 8),
         _outlineBtn('Back', () => _go(1)),
       ],
@@ -441,9 +514,9 @@ class AppointmentsTabState extends State<AppointmentsTab> {
               _row('Session', '$_session (${_sessions[_session]})'),
               _row('Doctor', _doctorData[_doctorIdx ?? 0].$1),
               _row('Speciality', _doctorData[_doctorIdx ?? 0].$2),
-              _row('Patient', 'Kasun Perera'),
-              _row('NIC', '199012345678'),
-              _row('Contact', '+94 71 234 5678'),
+              _row('Patient', _name.text.trim()),
+              _row('NIC', _nic.text.trim().toUpperCase()),
+              _row('Contact', _contact.text.trim()),
               _row('Est. Queue No.', _queueNo, highlight: true),
             ],
           ),
@@ -701,12 +774,20 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         ),
       );
 
-  Widget _input(String hint, {TextInputType? keyboard}) => TextField(
+  Widget _input(String hint, TextEditingController controller, String? error,
+          {TextInputType? keyboard}) =>
+      TextField(
+        controller: controller,
         keyboardType: keyboard,
         style: const TextStyle(fontSize: 12),
+        onChanged: (_) {
+          if (_showErrors) setState(() {});
+        },
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
+          errorText: _showErrors ? error : null,
+          errorStyle: const TextStyle(fontSize: 10),
           filled: true,
           fillColor: AppColors.white,
           contentPadding:
