@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../theme/app_colors.dart';
 import 'queue_status_screen.dart';
 
-// ===================================================================
-// APPOINTMENT MODEL
-// ===================================================================
-
+// Appointment booking / backend should provide these values.
+// No sample patient values are included.
 class CheckInAppointment {
   const CheckInAppointment({
     required this.appointmentId,
@@ -36,19 +33,12 @@ class CheckInAppointment {
   final String dateOfBirth;
 }
 
-// ===================================================================
-// APPOINTMENT LOOKUP
-// ===================================================================
-
-typedef CheckInAppointmentLookup =
-    Future<CheckInAppointment?> Function(
+// Later, connect this function to your appointment repository/backend.
+// It should return the correct appointment or null when none is found.
+typedef CheckInAppointmentLookup = Future<CheckInAppointment?> Function(
   String nic,
   String? appointmentId,
 );
-
-// ===================================================================
-// CHECK-IN SCREEN
-// ===================================================================
 
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({
@@ -59,10 +49,14 @@ class CheckInScreen extends StatefulWidget {
     this.onNavigationSelected,
   });
 
+  // Pass this from the appointment booking screen.
   final CheckInAppointment? bookedAppointment;
 
+  // Optional backend lookup, connected later.
   final CheckInAppointmentLookup? lookupAppointment;
 
+  // Receives the matched appointment.
+  // Backend check-in / navigation can be connected here.
   final ValueChanged<CheckInAppointment>? onCheckIn;
 
   final ValueChanged<int>? onNavigationSelected;
@@ -72,792 +66,733 @@ class CheckInScreen extends StatefulWidget {
 }
 
 class _CheckInScreenState extends State<CheckInScreen> {
-  final TextEditingController _nicController =
-      TextEditingController();
+  static const _background = Color(0xFFF0F7F6);
+  static const _primary = Color(0xFF007471);
+  static const _dark = Color(0xFF063A37);
+  static const _muted = Color(0xFF7C9A9C);
+  static const _border = Color(0xFFD6E5E5);
+  static const _error = Color(0xFFB3261E);
 
-  final TextEditingController _appointmentController =
-      TextEditingController();
+  // Must match your actual image filename and extension.
+  static const _hospitalImage =
+      'lib/assets/images/check_in_hospital.jpg';
+
+  static final _nicFormat = RegExp(
+    r'^(?:[0-9]{12}|[0-9]{9}[VX])$',
+  );
+
+  final _formKey = GlobalKey<FormState>();
+  final _nicController = TextEditingController();
+  final _appointmentController = TextEditingController();
 
   CheckInAppointment? _appointment;
-
   bool _loading = false;
+  String? _lookupError;
 
-  String? _errorMessage;
-
+  // Prevent an old lookup result from filling the card after input changes.
   int _requestVersion = 0;
+
+  String get _nic => _nicController.text.trim().toUpperCase();
+
+  String get _appointmentId =>
+      _appointmentController.text.trim().toUpperCase();
 
   @override
   void initState() {
     super.initState();
-    _applyBookingToFields();
+    _applyBookingToFields(widget.bookedAppointment);
+  }
+
+  void _applyBookingToFields(CheckInAppointment? booking) {
+    if (booking == null) return;
+
+    _nicController.text = booking.nic;
+    _appointmentController.text = booking.appointmentId;
+    _appointment = booking;
   }
 
   @override
-  void didUpdateWidget(
-    covariant CheckInScreen oldWidget,
-  ) {
+  void didUpdateWidget(covariant CheckInScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (oldWidget.bookedAppointment !=
-        widget.bookedAppointment) {
-      _applyBookingToFields();
-
-      if (mounted) {
-        setState(() {});
-      }
+    if (oldWidget.bookedAppointment != widget.bookedAppointment ||
+        oldWidget.lookupAppointment != widget.lookupAppointment) {
+      _applyBookingToFields(widget.bookedAppointment);
+      _inputChanged();
     }
   }
 
   @override
   void dispose() {
+    _requestVersion++;
+
     _nicController.dispose();
     _appointmentController.dispose();
+
     super.dispose();
   }
 
-  // =================================================================
-  // APPLY BOOKING
-  // =================================================================
+  String? _validateNic(String? value) {
+    final nic = (value ?? '').trim().toUpperCase();
 
-  void _applyBookingToFields() {
-    final booking = widget.bookedAppointment;
-
-    if (booking == null) {
-      _appointment = null;
-      return;
+    if (nic.isEmpty) {
+      return 'NIC is required.';
     }
 
-    _nicController.text = booking.nic;
-    _appointmentController.text = booking.appointmentId;
+    if (!_nicFormat.hasMatch(nic)) {
+      return 'Invalid NIC: use 12 digits or 9 digits + V/X.';
+    }
 
-    _appointment = booking;
-    _errorMessage = null;
+    return null;
   }
 
-  // =================================================================
-  // INPUT CHANGED
-  // =================================================================
+  bool _matches(CheckInAppointment appointment) {
+    final matchesNic =
+        appointment.nic.trim().toUpperCase() == _nic;
+
+    final matchesId = _appointmentId.isEmpty ||
+        appointment.appointmentId.trim().toUpperCase() ==
+            _appointmentId;
+
+    return matchesNic && matchesId;
+  }
 
   void _inputChanged() {
+    _requestVersion++;
+
     final booking = widget.bookedAppointment;
 
-    if (booking != null &&
-        _nicController.text.trim().toUpperCase() ==
-            booking.nic.toUpperCase()) {
-      setState(() {
-        _appointment = booking;
-        _errorMessage = null;
-      });
-      return;
-    }
-
     setState(() {
-      _appointment = null;
-      _errorMessage = null;
+      _loading = false;
+      _lookupError = null;
+
+      // Fill the card only when valid input matches the supplied booking.
+      _appointment = _validateNic(_nic) == null &&
+              booking != null &&
+              _matches(booking)
+          ? booking
+          : null;
     });
   }
-
-  // =================================================================
-  // NIC VALIDATION
-  // =================================================================
-
-  bool _isValidNic(String value) {
-    final nic = value.trim().toUpperCase();
-
-    final newNic = RegExp(r'^\d{12}$');
-    final oldNic = RegExp(r'^\d{9}[VX]$');
-
-    return newNic.hasMatch(nic) ||
-        oldNic.hasMatch(nic);
-  }
-
-  // =================================================================
-  // CHECK IN
-  // =================================================================
 
   Future<void> _checkIn() async {
+    if (_loading) return;
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
     FocusScope.of(context).unfocus();
 
-    final nic =
-        _nicController.text.trim().toUpperCase();
+    final lookup = widget.lookupAppointment;
+    var matchedAppointment = _appointment;
 
-    final appointmentId =
-        _appointmentController.text.trim();
+    if (matchedAppointment == null && lookup != null) {
+      final request = ++_requestVersion;
+      final requestedNic = _nic;
+      final requestedId = _appointmentId;
 
-    if (!_isValidNic(nic)) {
       setState(() {
-        _errorMessage =
-            'Please enter a valid NIC number.';
+        _loading = true;
+        _lookupError = null;
       });
+
+      try {
+        final result = await lookup(
+          requestedNic,
+          requestedId.isEmpty ? null : requestedId,
+        );
+
+        if (!mounted || request != _requestVersion) {
+          return;
+        }
+
+        matchedAppointment =
+            result != null && _matches(result) ? result : null;
+
+        setState(() {
+          _loading = false;
+          _appointment = matchedAppointment;
+        });
+      } catch (_) {
+        if (!mounted || request != _requestVersion) {
+          return;
+        }
+
+        setState(() {
+          _loading = false;
+          _appointment = null;
+          _lookupError =
+              'Unable to load appointment details. Please try again.';
+        });
+
+        return;
+      }
+    }
+
+    if (!mounted) return;
+
+    if (matchedAppointment == null) {
+      setState(() {
+        _lookupError =
+            widget.bookedAppointment == null && lookup == null
+                ? 'Appointment booking is not connected yet.'
+                : 'No matching appointment found. Check your details.';
+      });
+
       return;
     }
 
     setState(() {
-      _loading = true;
-      _errorMessage = null;
+      _lookupError = null;
+      _loading = false;
     });
 
-    final int requestId = ++_requestVersion;
+    // Send the matched appointment back to the parent screen/backend.
+    widget.onCheckIn?.call(matchedAppointment);
 
-    try {
-      CheckInAppointment? matchedAppointment;
+    if (!mounted) return;
 
-      // -------------------------------------------------------------
-      // CHECK BOOKED APPOINTMENT FIRST
-      // -------------------------------------------------------------
+    // -------------------------------------------------------------
+    // QUEUE STATUS
+    // -------------------------------------------------------------
+    // QueueStatusScreen currently does not accept an "appointment"
+    // parameter. Therefore we open it using its existing constructor.
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const QueueStatusScreen(),
+      ),
+    );
+  }
 
-      final booked = widget.bookedAppointment;
-
-      if (booked != null &&
-          booked.nic.toUpperCase() == nic) {
-        matchedAppointment = booked;
-      }
-
-      // -------------------------------------------------------------
-      // OPTIONAL LOOKUP
-      // -------------------------------------------------------------
-
-      if (matchedAppointment == null &&
-          widget.lookupAppointment != null) {
-        matchedAppointment =
-            await widget.lookupAppointment!(
-          nic,
-          appointmentId.isEmpty
-              ? null
-              : appointmentId,
-        );
-      }
-
-      if (!mounted ||
-          requestId != _requestVersion) {
-        return;
-      }
-
-      // -------------------------------------------------------------
-      // NO APPOINTMENT
-      // -------------------------------------------------------------
-
-      if (matchedAppointment == null) {
-        setState(() {
-          _loading = false;
-          _errorMessage =
-              'No appointment found for the entered details.';
-        });
-        return;
-      }
-
-      // -------------------------------------------------------------
-      // APPOINTMENT FOUND
-      // -------------------------------------------------------------
-
-      setState(() {
-        _appointment = matchedAppointment;
-        _loading = false;
-        _errorMessage = null;
-      });
-
-      widget.onCheckIn?.call(
-        matchedAppointment,
-      );
-
-      if (!mounted) return;
-
-      // -------------------------------------------------------------
-      // QUEUE STATUS
-      // -------------------------------------------------------------
-
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => QueueStatusScreen(
-            appointment: matchedAppointment!,
-          ),
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: _dark,
         ),
       );
-    } catch (e) {
-      if (!mounted ||
-          requestId != _requestVersion) {
-        return;
-      }
+  }
 
-      setState(() {
-        _loading = false;
-        _errorMessage =
-            'Something went wrong. Please try again.';
-      });
+  void _selectNavigation(int index) {
+    if (widget.onNavigationSelected != null) {
+      widget.onNavigationSelected!(index);
+    } else if (index != 0) {
+      const labels = [
+        'Home',
+        'Appointments',
+        'Queue',
+        'Alerts',
+      ];
 
-      debugPrint(
-        'Check-in error: $e',
+      _showMessage(
+        '${labels[index]} screen is not connected yet.',
       );
     }
   }
 
-  // =================================================================
-  // BUILD
-  // =================================================================
+  OutlineInputBorder _outline(
+    Color color, {
+    double width = 1,
+  }) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(
+        color: color,
+        width: width,
+      ),
+    );
+  }
+
+  InputDecoration _decoration({
+    String? hint,
+    Widget? label,
+  }) {
+    return InputDecoration(
+      hintText: hint,
+      label: label,
+      hintStyle: const TextStyle(
+        color: _muted,
+        fontSize: 14,
+      ),
+      filled: true,
+      fillColor: Colors.white,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 15,
+      ),
+      enabledBorder: _outline(_border),
+      border: _outline(_border),
+      focusedBorder: _outline(
+        _primary,
+        width: 1.5,
+      ),
+      errorBorder: _outline(_error),
+      focusedErrorBorder: _outline(
+        _error,
+        width: 1.5,
+      ),
+      errorStyle: const TextStyle(
+        color: _error,
+        fontSize: 11,
+        height: 1.2,
+      ),
+      errorMaxLines: 2,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (
-        BuildContext context,
-        BoxConstraints constraints,
-      ) {
-        final double screenWidth =
-            constraints.maxWidth;
-
-        // Responsive horizontal padding
-        final double horizontalPadding =
-            screenWidth < 600
-                ? 18
-                : screenWidth < 1000
-                    ? 30
-                    : 60;
-
-        // Content max width for laptop/tablet
-        final double contentMaxWidth =
-            screenWidth < 700
-                ? double.infinity
-                : 850;
-
-        return Container(
-          color: AppColors.primary100,
-          child: SafeArea(
-            bottom: false,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: contentMaxWidth,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: _background,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: _background,
+        resizeToAvoidBottomInset: true,
+        body: SafeArea(
+          bottom: false,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 480,
+              ),
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  28,
                 ),
-                child: Column(
-                  children: [
-                    _buildHeader(
-                      screenWidth,
-                    ),
-
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.fromLTRB(
-                          horizontalPadding,
-                          8,
-                          horizontalPadding,
-                          30,
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Check In',
+                        style: TextStyle(
+                          color: _dark,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildBanner(),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding:
+                            const EdgeInsets.symmetric(
+                          horizontal: 8,
                         ),
                         child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.stretch,
                           children: [
-                            _buildHospitalBanner(
-                              screenWidth,
-                            ),
-
-                            const SizedBox(
-                              height: 18,
-                            ),
-
-                            _buildCheckInForm(
-                              screenWidth,
-                            ),
-
-                            const SizedBox(
-                              height: 18,
-                            ),
-
-                            if (_appointment != null)
-                              _buildDetailsCard(
-                                screenWidth,
+                            TextFormField(
+                              controller: _nicController,
+                              validator: _validateNic,
+                              autovalidateMode:
+                                  AutovalidateMode
+                                      .onUserInteraction,
+                              onChanged: (_) =>
+                                  _inputChanged(),
+                              textInputAction:
+                                  TextInputAction.next,
+                              textCapitalization:
+                                  TextCapitalization.characters,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              style: const TextStyle(
+                                color: _dark,
+                                fontSize: 14,
                               ),
-
-                            const SizedBox(
-                              height: 20,
+                              decoration: _decoration(
+                                label: const Text.rich(
+                                  TextSpan(
+                                    text: 'NIC',
+                                    style: TextStyle(
+                                      color: _muted,
+                                      fontSize: 14,
+                                    ),
+                                    children: [
+                                      TextSpan(
+                                        text: ' *',
+                                        style: TextStyle(
+                                          color: _error,
+                                          fontWeight:
+                                              FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller:
+                                  _appointmentController,
+                              onChanged: (_) =>
+                                  _inputChanged(),
+                              textInputAction:
+                                  TextInputAction.done,
+                              onFieldSubmitted: (_) =>
+                                  _checkIn(),
+                              textCapitalization:
+                                  TextCapitalization.characters,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              style: const TextStyle(
+                                color: _dark,
+                                fontSize: 14,
+                              ),
+                              decoration: _decoration(
+                                hint: 'Appointment ID',
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: ElevatedButton(
+                                onPressed:
+                                    _loading ? null : _checkIn,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _primary,
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor:
+                                      _primary,
+                                  disabledForegroundColor:
+                                      Colors.white,
+                                  elevation: 0,
+                                  shape:
+                                      const StadiumBorder(),
+                                  textStyle: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight:
+                                        FontWeight.w700,
+                                  ),
+                                ),
+                                child: _loading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child:
+                                            CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Check In'),
+                              ),
+                            ),
+                            if (_lookupError != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(
+                                  top: 8,
+                                ),
+                                child: Text(
+                                  _lookupError!,
+                                  style: const TextStyle(
+                                    color: _error,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 18),
+                            _buildDetailsCard(),
                           ],
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        );
-      },
+        ),
+        bottomNavigationBar:
+            _buildBottomNavigation(),
+      ),
     );
   }
 
-  // =================================================================
-  // HEADER
-  // =================================================================
-
-  Widget _buildHeader(
-    double screenWidth,
-  ) {
-    final double titleSize =
-        screenWidth < 600 ? 25 : 29;
-
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.fromLTRB(
-        screenWidth < 600 ? 18 : 30,
-        14,
-        screenWidth < 600 ? 18 : 30,
-        12,
-      ),
-      child: Text(
-        'Check In',
-        style: TextStyle(
-          color: AppColors.primary900,
-          fontSize: titleSize,
-          fontWeight: FontWeight.w800,
+  Widget _buildBanner() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: AspectRatio(
+        aspectRatio: 2.24,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              _hospitalImage,
+              fit: BoxFit.cover,
+              errorBuilder: (
+                context,
+                error,
+                stackTrace,
+              ) {
+                return const ColoredBox(
+                  color: _dark,
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text(
+                        'Image missing: check '
+                        'lib/assets/images/check_in_hospital.jpg',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            ColoredBox(
+              color: Colors.black.withValues(
+                alpha: 0.38,
+              ),
+            ),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'Enter your details to check in for your\n'
+                  'appointment today',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // =================================================================
-  // HOSPITAL BANNER
-  // =================================================================
+  Widget _buildDetailsCard() {
+    final appointment = _appointment;
 
-  Widget _buildHospitalBanner(
-    double screenWidth,
-  ) {
-    final double bannerHeight =
-        screenWidth < 600
-            ? 150
-            : screenWidth < 1000
-                ? 190
-                : 220;
-
-    final double titleSize =
-        screenWidth < 600 ? 19 : 23;
+    final rows = <MapEntry<String, String>>[
+      MapEntry(
+        'Hospital',
+        appointment?.hospital ?? '',
+      ),
+      MapEntry(
+        'Date',
+        appointment?.date ?? '',
+      ),
+      MapEntry(
+        'Session',
+        appointment?.session ?? '',
+      ),
+      MapEntry(
+        'Doctor',
+        appointment?.doctor ?? '',
+      ),
+      MapEntry(
+        'Speciality',
+        appointment?.speciality ?? '',
+      ),
+      MapEntry(
+        'Patient',
+        appointment?.patient ?? '',
+      ),
+      MapEntry(
+        'NIC',
+        _nic,
+      ),
+      MapEntry(
+        'Date of Birth',
+        appointment?.dateOfBirth ?? '',
+      ),
+      MapEntry(
+        'Contact',
+        appointment?.contact ?? '',
+      ),
+      MapEntry(
+        'Appointment ID',
+        appointment?.appointmentId.isNotEmpty == true
+            ? appointment!.appointmentId
+            : 'Optional / not assigned',
+      ),
+      MapEntry(
+        'Est. Queue No.',
+        appointment?.estimatedQueueNumber ?? '',
+      ),
+    ];
 
     return Container(
       width: double.infinity,
-      height: bannerHeight,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius:
-            BorderRadius.circular(18),
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/images/check_in_hospital.jpg',
-            fit: BoxFit.cover,
-            errorBuilder: (
-              context,
-              error,
-              stackTrace,
-            ) {
-              return Container(
-                color: AppColors.primary300,
-                child: const Center(
-                  child: Icon(
-                    Icons.local_hospital_outlined,
-                    size: 65,
-                    color: Colors.white,
-                  ),
-                ),
-              );
-            },
-          ),
-
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withOpacity(0.05),
-                  Colors.black.withOpacity(0.65),
-                ],
-              ),
-            ),
-          ),
-
-          Positioned(
-            left: 18,
-            right: 18,
-            bottom: 16,
-            child: Text(
-              'Check in for your appointment',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: titleSize,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =================================================================
-  // CHECK-IN FORM
-  // =================================================================
-
-  Widget _buildCheckInForm(
-    double screenWidth,
-  ) {
-    final double titleSize =
-        screenWidth < 600 ? 18 : 21;
-
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(
-        screenWidth < 600 ? 18 : 24,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 12,
       ),
       decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius:
-            BorderRadius.circular(18),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _border,
+        ),
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Enter your details',
-            style: TextStyle(
-              color: AppColors.primary900,
-              fontSize: titleSize,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+        children: List.generate(
+          rows.length,
+          (index) {
+            final row = rows[index];
 
-          const SizedBox(height: 16),
-
-          TextField(
-            controller: _nicController,
-            textCapitalization:
-                TextCapitalization.characters,
-            keyboardType: TextInputType.text,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(
-                RegExp(r'[0-9a-zA-Z]'),
-              ),
-              LengthLimitingTextInputFormatter(
-                12,
-              ),
-            ],
-            onChanged: (_) {
-              _inputChanged();
-            },
-            decoration: InputDecoration(
-              labelText: 'NIC Number',
-              hintText: 'Enter your NIC',
-              prefixIcon: const Icon(
-                Icons.badge_outlined,
-              ),
-              filled: true,
-              fillColor:
-                  AppColors.primary100,
-              border: OutlineInputBorder(
-                borderRadius:
-                    BorderRadius.circular(12),
-                borderSide:
-                    BorderSide.none,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          TextField(
-            controller:
-                _appointmentController,
-            keyboardType: TextInputType.text,
-            onChanged: (_) {
-              _inputChanged();
-            },
-            decoration: InputDecoration(
-              labelText: 'Appointment ID',
-              hintText:
-                  'Enter appointment ID if available',
-              prefixIcon: const Icon(
-                Icons.confirmation_number_outlined,
-              ),
-              filled: true,
-              fillColor:
-                  AppColors.primary100,
-              border: OutlineInputBorder(
-                borderRadius:
-                    BorderRadius.circular(12),
-                borderSide:
-                    BorderSide.none,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          if (_errorMessage != null)
-            Container(
-              width: double.infinity,
-              padding:
-                  const EdgeInsets.all(12),
-              margin:
-                  const EdgeInsets.only(
-                bottom: 14,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.red
-                    .withOpacity(0.08),
-                borderRadius:
-                    BorderRadius.circular(10),
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom:
+                    index == rows.length - 1 ? 0 : 8,
               ),
               child: Row(
                 crossAxisAlignment:
                     CrossAxisAlignment.start,
                 children: [
-                  const Icon(
-                    Icons.error_outline,
-                    color: Colors.red,
-                    size: 20,
+                  Expanded(
+                    flex: 4,
+                    child: Text(
+                      row.key,
+                      style: const TextStyle(
+                        color: _muted,
+                        fontSize: 13,
+                        height: 1.25,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
+                    flex: 7,
                     child: Text(
-                      _errorMessage!,
-                      style:
-                          const TextStyle(
-                        color: Colors.red,
+                      row.value,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color:
+                            row.key == 'Est. Queue No.'
+                                ? _primary
+                                : _dark,
                         fontSize: 13,
+                        height: 1.25,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                 ],
               ),
-            ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed:
-                  _loading ? null : _checkIn,
-              style:
-                  ElevatedButton.styleFrom(
-                backgroundColor:
-                    AppColors.primary300,
-                foregroundColor:
-                    Colors.white,
-                disabledBackgroundColor:
-                    AppColors.gray300,
-                padding:
-                    const EdgeInsets.symmetric(
-                  vertical: 14,
-                ),
-                shape:
-                    RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(
-                    12,
-                  ),
-                ),
-              ),
-              child: _loading
-                  ? const SizedBox(
-                      height: 22,
-                      width: 22,
-                      child:
-                          CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text(
-                      'Check In',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight:
-                            FontWeight.w700,
+  Widget _buildBottomNavigation() {
+    const labels = [
+      'Home',
+      'Appointments',
+      'Queue',
+      'Alerts',
+    ];
+
+    const icons = [
+      Icons.home_outlined,
+      Icons.calendar_today_outlined,
+      Icons.format_list_bulleted,
+      Icons.notifications_none,
+    ];
+
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: _border,
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Align(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 480,
+            ),
+            child: Row(
+              children: List.generate(
+                labels.length,
+                (index) {
+                  final color =
+                      index == 0 ? _primary : _muted;
+
+                  return Expanded(
+                    child: Semantics(
+                      selected: index == 0,
+                      child: InkWell(
+                        onTap: () =>
+                            _selectNavigation(index),
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.symmetric(
+                            vertical: 12,
+                            horizontal: 2,
+                          ),
+                          child: Column(
+                            mainAxisSize:
+                                MainAxisSize.min,
+                            children: [
+                              Icon(
+                                icons[index],
+                                color: color,
+                                size: 21,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                labels[index],
+                                textAlign:
+                                    TextAlign.center,
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 10,
+                                  fontWeight: index == 0
+                                      ? FontWeight.w700
+                                      : FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
+                  );
+                },
+              ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // =================================================================
-  // APPOINTMENT DETAILS
-  // =================================================================
-
-  Widget _buildDetailsCard(
-    double screenWidth,
-  ) {
-    final appointment =
-        _appointment!;
-
-    final double titleSize =
-        screenWidth < 600 ? 19 : 21;
-
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(
-        screenWidth < 600 ? 18 : 24,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius:
-            BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Appointment Details',
-            style: TextStyle(
-              color: AppColors.primary900,
-              fontSize: titleSize,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-
-          const SizedBox(height: 18),
-
-          _detailRow(
-            Icons.local_hospital_outlined,
-            'Hospital',
-            appointment.hospital,
-          ),
-
-          _detailRow(
-            Icons.calendar_today_outlined,
-            'Date',
-            appointment.date,
-          ),
-
-          _detailRow(
-            Icons.access_time_outlined,
-            'Session',
-            appointment.session,
-          ),
-
-          _detailRow(
-            Icons.person_outline,
-            'Doctor',
-            appointment.doctor,
-          ),
-
-          _detailRow(
-            Icons.medical_services_outlined,
-            'Speciality',
-            appointment.speciality,
-          ),
-
-          _detailRow(
-            Icons.person_outline,
-            'Patient',
-            appointment.patient,
-          ),
-
-          _detailRow(
-            Icons.badge_outlined,
-            'NIC',
-            appointment.nic,
-          ),
-
-          if (appointment
-              .dateOfBirth
-              .isNotEmpty)
-            _detailRow(
-              Icons.cake_outlined,
-              'Date of Birth',
-              appointment.dateOfBirth,
-            ),
-
-          if (appointment
-              .contact
-              .isNotEmpty)
-            _detailRow(
-              Icons.phone_outlined,
-              'Contact',
-              appointment.contact,
-            ),
-
-          if (appointment
-              .appointmentId
-              .isNotEmpty)
-            _detailRow(
-              Icons.confirmation_number_outlined,
-              'Appointment ID',
-              appointment
-                  .appointmentId,
-            ),
-
-          if (appointment
-              .estimatedQueueNumber
-              .isNotEmpty)
-            _detailRow(
-              Icons.people_alt_outlined,
-              'Est. Queue No.',
-              appointment
-                  .estimatedQueueNumber,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _detailRow(
-    IconData icon,
-    String title,
-    String value,
-  ) {
-    return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 14,
-      ),
-      child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            size: 20,
-            color: AppColors.primary300,
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color:
-                        AppColors.gray500,
-                    fontSize: 11,
-                  ),
-                ),
-
-                const SizedBox(height: 3),
-
-                Text(
-                  value.isEmpty
-                      ? '-'
-                      : value,
-                  softWrap: true,
-                  style: TextStyle(
-                    color:
-                        AppColors.primary900,
-                    fontSize: 14,
-                    fontWeight:
-                        FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
