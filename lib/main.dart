@@ -5,12 +5,13 @@ import 'firebase_options.dart';
 import 'common Screens/onboarding_screen.dart';
 import 'Patient Management Screens/home_screen.dart';
 import 'theme/app_colors.dart';
-
+import 'services/booking_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await BookingService().seedIfEmpty();
   debugPrint('Firebase connected: ${Firebase.app().name}');
   runApp(const MyApp());
 }

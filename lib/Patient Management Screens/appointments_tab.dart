@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../services/booking_service.dart';
 
 const Map<String, Map<String, List<String>>> _locations = {
   'Western Province': {
@@ -47,23 +48,6 @@ const Map<String, Map<String, List<String>>> _locations = {
   },
 };
 
-// name, status, status colour, province, district, city  (sample data)
-const List<(String, String, Color, String, String, String)> _hospitalData = [
-  ('City General Hospital', 'OPD Open', Colors.green, 'Western Province', 'Colombo', 'Colombo'),
-  ('District Hospital', 'Full', Colors.red, 'Western Province', 'Gampaha', 'Negombo'),
-  ('Teaching Hospital', '3 slots left', Colors.orange, 'Central Province', 'Kandy', 'Kandy'),
-  ('Karapitiya Hospital', 'OPD Open', Colors.green, 'Southern Province', 'Galle', 'Galle'),
-  ('Jaffna Base Hospital', '5 slots left', Colors.orange, 'Northern Province', 'Jaffna', 'Jaffna'),
-  ('Kurunegala Hospital', 'OPD Open', Colors.green, 'North Western Province', 'Kurunegala', 'Kurunegala'),
-];
-
-// name, speciality, patients waiting (sample data)
-const List<(String, String, int)> _doctorData = [
-  ('Dr. S. Perera', 'Internal Medicine', 8),
-  ('Dr. R. Fernando', 'General Surgery', 14),
-  ('Dr. M. Silva', 'Paediatrics', 3),
-];
-
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _sessions = {
   'Morning': '9:00 - 12:00',
@@ -83,6 +67,95 @@ class AppointmentsTab extends StatefulWidget {
 class AppointmentsTabState extends State<AppointmentsTab> {
   // 0 = hospital list, 1..3 = booking steps, 4 = history
   int _step = 0;
+
+  final _service = BookingService();
+  List<Hospital> _hospitalList = [];
+  List<Doctor> _doctorList = [];
+  bool _loadingHospitals = true;
+  String? _loadError;
+  String? _hospitalId;
+  bool _saving = false;
+  int _confirmedQueue = 0;
+  late final Stream<List<AppointmentRecord>> _historyStream =
+      _service.myAppointments();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHospitals();
+  }
+
+  Future<void> _loadHospitals() async {
+    setState(() {
+      _loadingHospitals = true;
+      _loadError = null;
+    });
+    try {
+      final list = await _service.getHospitals();
+      if (!mounted) return;
+      setState(() {
+        _hospitalList = list;
+        _loadingHospitals = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Could not load hospitals';
+        _loadingHospitals = false;
+      });
+    }
+  }
+
+  Future<void> _loadDoctors() async {
+    final id = _hospitalId;
+    if (id == null) return;
+    try {
+      final docs = await _service.getDoctors(id);
+      await _service.loadWaiting(id, docs, _dateIso, _session);
+      if (!mounted || id != _hospitalId) return;
+      setState(() => _doctorList = docs);
+    } catch (_) {
+      if (mounted) _snack('Could not load doctors');
+    }
+  }
+
+  Future<void> _refreshWaiting() async {
+    final id = _hospitalId;
+    if (id == null || _doctorList.isEmpty) return;
+    try {
+      await _service.loadWaiting(id, _doctorList, _dateIso, _session);
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  Future<void> _confirmBooking() async {
+    if (_saving) return;
+    final hid = _hospitalId;
+    final di = _doctorIdx;
+    if (hid == null || di == null || _dob == null) return;
+    final hospital = _hospitalList.firstWhere((h) => h.id == hid);
+    setState(() => _saving = true);
+    try {
+      final q = await _service.book(
+        hospital: hospital,
+        doctor: _doctorList[di],
+        date: _dateIso,
+        dateLabel: _dateLabel,
+        session: _session,
+        patientName: _name.text.trim(),
+        nic: _nic.text.trim().toUpperCase(),
+        dob: _dob!.toIso8601String().substring(0, 10),
+        contact: _contact.text.trim(),
+      );
+      if (!mounted) return;
+      _confirmedQueue = q;
+      _showConfirmed();
+    } catch (e) {
+      if (mounted) _snack(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   // hospital filters
   String? _province, _district, _city;
@@ -145,13 +218,16 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   String _two(int n) => n.toString().padLeft(2, '0');
   String get _dateLabel => '${_two(_date.day)} ${_months[_date.month - 1]} ${_date.year}';
   String get _dateIso => '${_date.year}-${_two(_date.month)}-${_two(_date.day)}';
-  String get _queueNo => '#${_two(_doctorData[_doctorIdx ?? 0].$3 + 1)}';
+  String get _queueNo =>
+      '#${_two((_doctorIdx == null ? 0 : _doctorList[_doctorIdx!].waiting) + 1)}';
 
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m)));
 
   void _resetBooking() => setState(() {
         _hospital = null;
+        _hospitalId = null;
+        _doctorList = [];
         _doctorIdx = null;
         _doctorQuery = '';
         _session = 'Morning';
@@ -170,7 +246,10 @@ class AppointmentsTabState extends State<AppointmentsTab> {
       firstDate: DateTime(now.year, now.month, now.day),
       lastDate: now.add(const Duration(days: 60)),
     );
-    if (d != null) setState(() => _date = d);
+    if (d != null) {
+      setState(() => _date = d);
+      _refreshWaiting();
+    }
   }
 
   void _go(int s) => setState(() => _step = s);
@@ -190,12 +269,12 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   // ---------- Screen 2: hospital list ----------
   Widget _hospitals() {
     final q = _query.trim().toLowerCase();
-    final list = _hospitalData
+    final list = _hospitalList
         .where((h) =>
-            (_province == null || h.$4 == _province) &&
-            (_district == null || h.$5 == _district) &&
-            (_city == null || h.$6 == _city) &&
-            h.$1.toLowerCase().contains(q))
+            (_province == null || h.province == _province) &&
+            (_district == null || h.district == _district) &&
+            (_city == null || h.city == _city) &&
+            h.name.toLowerCase().contains(q))
         .toList();
     final districts = _locations[_province]?.keys.toList() ?? <String>[];
     final cities = _locations[_province]?[_district] ?? <String>[];
@@ -267,7 +346,14 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         const SizedBox(height: 14),
         _label('HOSPITAL AVAILABILITY'),
         Expanded(
-          child: list.isEmpty
+          child: _loadingHospitals
+              ? const Center(child: CircularProgressIndicator())
+              : _loadError != null
+                  ? Center(
+                      child: TextButton(
+                          onPressed: _loadHospitals,
+                          child: Text('$_loadError. Tap to retry')))
+                  : list.isEmpty
               ? const Center(
                   child: Text('No hospitals found',
                       style: TextStyle(fontSize: 12, color: AppColors.gray400)))
@@ -275,13 +361,19 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                   children: [
                     for (final h in list)
                       _card(
-                        selected: _hospital == h.$1,
+                        selected: _hospital == h.name,
                         onTap: () {
-                          if (h.$2 == 'Full') {
+                          if (h.isFull) {
                             _snack('This hospital OPD is full');
                             return;
                           }
-                          setState(() => _hospital = h.$1);
+                          setState(() {
+                            _hospital = h.name;
+                            _hospitalId = h.id;
+                            _doctorList = [];
+                            _doctorIdx = null;
+                          });
+                          _loadDoctors();
                         },
                         child: Row(
                           children: [
@@ -299,16 +391,16 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(h.$1,
+                                  Text(h.name,
                                       style: const TextStyle(
                                           fontSize: 13,
                                           fontWeight: FontWeight.bold,
                                           color: AppColors.primary500)),
                                   Row(
                                     children: [
-                                      Icon(Icons.circle, size: 8, color: h.$3),
+                                      Icon(Icons.circle, size: 8, color: h.color),
                                       const SizedBox(width: 4),
-                                      Text(h.$2,
+                                      Text(h.label,
                                           style: const TextStyle(
                                               fontSize: 11,
                                               color: AppColors.gray400)),
@@ -318,10 +410,10 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                               ),
                             ),
                             Icon(
-                              _hospital == h.$1
+                              _hospital == h.name
                                   ? Icons.check_circle
                                   : Icons.chevron_right,
-                              color: _hospital == h.$1
+                              color: _hospital == h.name
                                   ? AppColors.primary300
                                   : AppColors.gray400,
                             ),
@@ -346,9 +438,9 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   Widget _details() {
     final q = _doctorQuery.trim().toLowerCase();
     final docs = [
-      for (var i = 0; i < _doctorData.length; i++)
-        if (_doctorData[i].$1.toLowerCase().contains(q) ||
-            _doctorData[i].$2.toLowerCase().contains(q))
+      for (var i = 0; i < _doctorList.length; i++)
+        if (_doctorList[i].name.toLowerCase().contains(q) ||
+            _doctorList[i].speciality.toLowerCase().contains(q))
           i,
     ];
     return Column(
@@ -369,7 +461,10 @@ class AppointmentsTabState extends State<AppointmentsTab> {
           hint: 'Session',
           value: _session,
           items: _sessions.keys.toList(),
-          onChanged: (v) => setState(() => _session = v ?? _session),
+          onChanged: (v) {
+            setState(() => _session = v ?? _session);
+            _refreshWaiting();
+          },
           bordered: true,
         ),
         const SizedBox(height: 14),
@@ -391,12 +486,12 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(_doctorData[i].$1,
+                                  Text(_doctorList[i].name,
                                       style: const TextStyle(
                                           fontSize: 13,
                                           fontWeight: FontWeight.bold,
                                           color: AppColors.primary500)),
-                                  Text(_doctorData[i].$2,
+                                  Text(_doctorList[i].speciality,
                                       style: const TextStyle(
                                           fontSize: 11,
                                           color: AppColors.gray400)),
@@ -410,7 +505,7 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                                 color: AppColors.primary100,
                                 borderRadius: BorderRadius.circular(20),
                               ),
-                              child: Text('${_doctorData[i].$3} waiting',
+                              child: Text('${_doctorList[i].waiting} waiting',
                                   style: const TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
@@ -512,8 +607,8 @@ class AppointmentsTabState extends State<AppointmentsTab> {
               _row('Hospital', _hospital ?? '-'),
               _row('Date', _dateIso),
               _row('Session', '$_session (${_sessions[_session]})'),
-              _row('Doctor', _doctorData[_doctorIdx ?? 0].$1),
-              _row('Speciality', _doctorData[_doctorIdx ?? 0].$2),
+              _row('Doctor', _doctorList[_doctorIdx ?? 0].name),
+              _row('Speciality', _doctorList[_doctorIdx ?? 0].speciality),
               _row('Patient', _name.text.trim()),
               _row('NIC', _nic.text.trim().toUpperCase()),
               _row('Contact', _contact.text.trim()),
@@ -522,7 +617,7 @@ class AppointmentsTabState extends State<AppointmentsTab> {
           ),
         ),
         const Spacer(),
-        _primaryBtn('Confirm Appointment', _showConfirmed),
+        _primaryBtn(_saving ? 'Saving...' : 'Confirm Appointment', _confirmBooking),
         const SizedBox(height: 8),
         _outlineBtn('Back', () => _go(2)),
       ],
@@ -534,7 +629,7 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _ConfirmedScreen(
-          queue: _queueNo,
+          queue: '#${_two(_confirmedQueue)}',
           summary: '${_hospital ?? ''} · $_dateLabel',
           onViewAppointments: () {
             Navigator.of(context).pop();
@@ -554,89 +649,98 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Appointments history ----------
   Widget _history() {
-    const items = [
-      ('City General Hospital', 'Upcoming', 'Dr. S. Perera', '22 Sep 2026', '#09'),
-      ('Teaching Hospital', 'Completed', 'Dr. R. Fernando', '15 Sep 2026', '#22'),
-      ('District Hospital', 'Completed', 'Dr. M. Silva', '03 Sep 2026', '#04'),
-      ('City General Hospital', 'Cancelled', 'Dr. K. Jayasinghe', '18 Aug 2026', '#17'),
-      ('Teaching Hospital', 'Completed', 'Dr. S. Perera', '01 Aug 2026', '#31'),
-    ];
     Color bg(String s) => switch (s) {
-          'Upcoming' => AppColors.primary100,
-          'Completed' => Colors.green.shade50,
+          'upcoming' => AppColors.primary100,
+          'completed' => Colors.green.shade50,
           _ => Colors.red.shade50,
         };
     Color fg(String s) => switch (s) {
-          'Upcoming' => AppColors.primary300,
-          'Completed' => Colors.green.shade700,
+          'upcoming' => AppColors.primary300,
+          'completed' => Colors.green.shade700,
           _ => Colors.red.shade700,
         };
+    String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    Widget msg(String t) => Center(
+        child: Text(t,
+            style: const TextStyle(fontSize: 12, color: AppColors.gray400)));
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header('Appointments History'),
         const SizedBox(height: 12),
         Expanded(
-          child: ListView(
-            children: [
-              for (final a in items)
-                _card(
-                  child: Column(
-                    children: [
-                      Row(
+          child: StreamBuilder<List<AppointmentRecord>>(
+            stream: _historyStream,
+            builder: (context, snap) {
+              if (snap.hasError) return msg('Could not load appointments');
+              if (!snap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final items = snap.data!;
+              if (items.isEmpty) return msg('No appointments yet');
+              return ListView(
+                children: [
+                  for (final a in items)
+                    _card(
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: Text(a.$1,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primary500)),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: bg(a.$2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(a.$2,
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: fg(a.$2))),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 20),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(a.$3,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(a.hospitalName,
                                     style: const TextStyle(
-                                        fontSize: 12,
+                                        fontSize: 13,
                                         fontWeight: FontWeight.bold,
                                         color: AppColors.primary500)),
-                                Text(a.$4,
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: AppColors.gray400)),
-                              ],
-                            ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: bg(a.status),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(cap(a.status),
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: fg(a.status))),
+                              ),
+                            ],
                           ),
-                          Text('Queue ${a.$5}',
-                              style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.primary500)),
+                          const Divider(height: 20),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(a.doctorName,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.primary500)),
+                                    Text(a.dateLabel,
+                                        style: const TextStyle(
+                                            fontSize: 11,
+                                            color: AppColors.gray400)),
+                                  ],
+                                ),
+                              ),
+                              Text('Queue #${_two(a.queueNo)}',
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary500)),
+                            ],
+                          ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-            ],
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ],

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../services/booking_service.dart';
 import 'appointments_tab.dart';
 import 'notifications_tab.dart';
 import 'profile_tab.dart';
@@ -14,6 +15,14 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   final _apptKey = GlobalKey<AppointmentsTabState>();
+  final _service = BookingService();
+  late final _appointments = _service.myAppointments();
+  late final _profile = _service.myProfile();
+
+  void _openHistory() {
+    _apptKey.currentState?.showHistory();
+    setState(() => _index = 1);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +32,13 @@ class _HomeScreenState extends State<HomeScreen> {
         child: IndexedStack(
           index: _index,
           children: [
-            _HomeTab(onBook: () => setState(() => _index = 1)),
+            _HomeTab(
+              appointments: _appointments,
+              profile: _profile,
+              onBook: () => setState(() => _index = 1),
+              onHistory: _openHistory,
+              onNotifications: () => setState(() => _index = 2),
+            ),
             AppointmentsTab(key: _apptKey, onBackToHome: () => setState(() => _index = 0)),
             const NotificationsTab(),
             ProfileTab(
@@ -60,8 +75,17 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _HomeTab extends StatelessWidget {
-  final VoidCallback onBook;
-  const _HomeTab({required this.onBook});
+  final Stream<List<AppointmentRecord>> appointments;
+  final Stream<UserProfile> profile;
+  final VoidCallback onBook, onHistory, onNotifications;
+
+  const _HomeTab({
+    required this.appointments,
+    required this.profile,
+    required this.onBook,
+    required this.onHistory,
+    required this.onNotifications,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -71,11 +95,15 @@ class _HomeTab extends StatelessWidget {
         // Header
         Row(
           children: [
-            const CircleAvatar(
-              radius: 16,
-              backgroundColor: AppColors.primary300,
-              child: Text('P',
-                  style: TextStyle(color: AppColors.white, fontSize: 13)),
+            StreamBuilder<UserProfile>(
+              stream: profile,
+              builder: (context, snap) => CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.primary300,
+                child: Text(snap.data?.initials ?? '',
+                    style:
+                        const TextStyle(color: AppColors.white, fontSize: 13)),
+              ),
             ),
             const Expanded(
               child: Center(
@@ -86,11 +114,15 @@ class _HomeTab extends StatelessWidget {
                         color: AppColors.primary500)),
               ),
             ),
-            const CircleAvatar(
-              radius: 16,
-              backgroundColor: AppColors.white,
-              child: Icon(Icons.notifications_none,
-                  size: 18, color: AppColors.primary500),
+            InkWell(
+              onTap: onNotifications,
+              customBorder: const CircleBorder(),
+              child: const CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.white,
+                child: Icon(Icons.notifications_none,
+                    size: 18, color: AppColors.primary500),
+              ),
             ),
           ],
         ),
@@ -142,83 +174,126 @@ class _HomeTab extends StatelessWidget {
                 color: AppColors.gray400)),
         const SizedBox(height: 8),
 
-        // Upcoming appointment card
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('City General Hospital',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: AppColors.primary500)),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary300,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text('Queue #12',
-                        style: TextStyle(
-                            color: AppColors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-              const Text('Dr. Aris Silva — General OPD',
-                  style: TextStyle(fontSize: 12, color: AppColors.gray400)),
-              const Divider(height: 24),
-              Row(
-                children: [
-                  const Icon(Icons.access_time,
-                      size: 16, color: AppColors.primary300),
-                  const SizedBox(width: 6),
-                  const Text('Today, 10:30 AM',
-                      style: TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  const Text('Est. Wait: 25 mins',
-                      style:
-                          TextStyle(fontSize: 12, color: AppColors.gray400)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: const LinearProgressIndicator(
-                  value: 0.6,
-                  minHeight: 5,
-                  backgroundColor: AppColors.gray100,
-                  color: AppColors.primary300,
+        // Upcoming appointment card (data from Firestore)
+        StreamBuilder<List<AppointmentRecord>>(
+          stream: appointments,
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              return Container(
+                height: 90,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(14),
                 ),
+                child: snap.hasError
+                    ? const Text('Could not load appointments',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.gray400))
+                    : const CircularProgressIndicator(),
+              );
+            }
+            final upcoming = snap.data!
+                .where((a) => a.status == 'upcoming')
+                .toList()
+              ..sort((a, b) => a.date.compareTo(b.date));
+            if (upcoming.isEmpty) {
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Text(
+                    'No upcoming appointment. Tap "Book Appointment" to make one.',
+                    style: TextStyle(fontSize: 12, color: AppColors.gray400)),
+              );
+            }
+            final a = upcoming.first;
+            return Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(height: 6),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Consultation in progress',
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary400)),
-                  Text('Next slot',
-                      style:
-                          TextStyle(fontSize: 10, color: AppColors.gray400)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(a.hospitalName,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                color: AppColors.primary500)),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary300,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                            'Queue #${a.queueNo.toString().padLeft(2, '0')}',
+                            style: const TextStyle(
+                                color: AppColors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                  Text(a.doctorName,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.gray400)),
+                  const Divider(height: 24),
+                  Row(
+                    children: [
+                      const Icon(Icons.access_time,
+                          size: 16, color: AppColors.primary300),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('${a.dateLabel} · ${a.session}',
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+                      Text(
+                          a.queueNo <= 1
+                              ? 'You are first'
+                              : 'Est. Wait: ~${(a.queueNo - 1) * 5} mins',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.gray400)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: const LinearProgressIndicator(
+                      value: 0.6,
+                      minHeight: 5,
+                      backgroundColor: AppColors.gray100,
+                      color: AppColors.primary300,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Consultation in progress',
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary400)),
+                      Text('Next slot',
+                          style: TextStyle(
+                              fontSize: 10, color: AppColors.gray400)),
+                    ],
+                  ),
                 ],
               ),
-            ],
-          ),
+            );
+          },
         ),
         const SizedBox(height: 16),
 
@@ -229,7 +304,7 @@ class _HomeTab extends StatelessWidget {
             const SizedBox(width: 10),
             _action(Icons.event_available_outlined, 'Book\nAppointment', onBook),
             const SizedBox(width: 10),
-            _action(Icons.folder_open_outlined, 'My\nAppointments', () {}),
+            _action(Icons.folder_open_outlined, 'My\nAppointments', onHistory),
           ],
         ),
       ],
