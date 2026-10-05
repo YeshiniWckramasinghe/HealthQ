@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'common Screens/onboarding_screen.dart';
 import 'theme/app_colors.dart';
+import 'services/booking_service.dart';
 
 // Global future so screens requiring Firebase can ensure it is ready
 Future<FirebaseApp>? _firebaseInitFuture;
@@ -17,9 +18,11 @@ Future<FirebaseApp> ensureFirebaseInitialized() {
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Start Firebase asynchronously in background without blocking the first frame
-  ensureFirebaseInitialized().then((app) {
+  // Start Firebase in background without blocking the first frame,
+  // then seed booking data once Firebase is ready
+  ensureFirebaseInitialized().then((app) async {
     debugPrint('Firebase connected: ${app.name}');
+    await BookingService().seedIfEmpty();
   }).catchError((e) {
     debugPrint('Firebase init error: $e');
   });
