@@ -257,6 +257,13 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   /// Lets other tabs (e.g. Profile) jump straight to the history list.
   void showHistory() => _go(4);
 
+  /// Steps back inside the booking flow. Returns false when already at the first screen.
+  bool goBack() {
+    if (_step == 0) return false;
+    _go(_step == 4 ? 0 : _step - 1);
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [_hospitals(), _details(), _patient(), _confirm(), _history()];
@@ -267,162 +274,187 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   }
 
   // ---------- Screen 2: hospital list ----------
+  bool _matches(Hospital h) =>
+      (_province == null || h.province == _province) &&
+      (_district == null || h.district == _district) &&
+      (_city == null || h.city == _city) &&
+      h.name.toLowerCase().contains(_query.trim().toLowerCase());
+
+  /// Applies a filter/search change and drops the selected hospital
+  /// if it no longer matches the filters.
+  void _changeFilter(VoidCallback change) {
+    setState(() {
+      change();
+      final id = _hospitalId;
+      if (id != null && !_hospitalList.any((h) => h.id == id && _matches(h))) {
+        _hospital = null;
+        _hospitalId = null;
+        _doctorList = [];
+        _doctorIdx = null;
+      }
+    });
+  }
+
   Widget _hospitals() {
-    final q = _query.trim().toLowerCase();
-    final list = _hospitalList
-        .where((h) =>
-            (_province == null || h.province == _province) &&
-            (_district == null || h.district == _district) &&
-            (_city == null || h.city == _city) &&
-            h.name.toLowerCase().contains(q))
-        .toList();
+    final list = _hospitalList.where(_matches).toList();
     final districts = _locations[_province]?.keys.toList() ?? <String>[];
     final cities = _locations[_province]?[_district] ?? <String>[];
-    final hasFilter = _province != null;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('Appointment Booking'),
-        const SizedBox(height: 12),
-        _search((v) => setState(() => _query = v)),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            _label('HOSPITAL DETAILS'),
-            const Spacer(),
-            if (hasFilter)
-              GestureDetector(
-                onTap: () => setState(() {
-                  _province = null;
-                  _district = null;
-                  _city = null;
-                }),
-                child: const Text('Clear',
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary300)),
-              ),
-          ],
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: _drop(
-                hint: 'Province',
-                value: _province,
-                items: _locations.keys.toList(),
-                onChanged: (v) => setState(() {
-                  _province = v;
-                  _district = null;
-                  _city = null;
-                }),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _drop(
-                hint: 'District',
-                value: _district,
-                items: districts,
-                onChanged: (v) => setState(() {
-                  _district = v;
-                  _city = null;
-                }),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _drop(
-                hint: 'City',
-                value: _city,
-                items: cities,
-                onChanged: (v) => setState(() => _city = v),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        _label('HOSPITAL AVAILABILITY'),
         Expanded(
-          child: _loadingHospitals
-              ? const Center(child: CircularProgressIndicator())
-              : _loadError != null
-                  ? Center(
-                      child: TextButton(
-                          onPressed: _loadHospitals,
-                          child: Text('$_loadError. Tap to retry')))
-                  : list.isEmpty
-              ? const Center(
-                  child: Text('No hospitals found',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray400)))
-              : ListView(
-                  children: [
-                    for (final h in list)
-                      _card(
-                        selected: _hospital == h.name,
-                        onTap: () {
-                          if (h.isFull) {
-                            _snack('This hospital OPD is full');
-                            return;
-                          }
-                          setState(() {
-                            _hospital = h.name;
-                            _hospitalId = h.id;
-                            _doctorList = [];
-                            _doctorIdx = null;
-                          });
-                          _loadDoctors();
-                        },
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary100,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Icon(Icons.local_hospital_outlined,
-                                  size: 16, color: AppColors.primary300),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              _header('Appointment Booking'),
+              const SizedBox(height: 12),
+              _search((v) => _changeFilter(() => _query = v)),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  _label('HOSPITAL DETAILS'),
+                  const Spacer(),
+                  if (_province != null)
+                    GestureDetector(
+                      onTap: () => _changeFilter(() {
+                        _province = null;
+                        _district = null;
+                        _city = null;
+                      }),
+                      child: const Text('Clear',
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary300)),
+                    ),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _drop(
+                      hint: 'Province',
+                      value: _province,
+                      items: _locations.keys.toList(),
+                      onChanged: (v) => _changeFilter(() {
+                        _province = v;
+                        _district = null;
+                        _city = null;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _drop(
+                      hint: 'District',
+                      value: _district,
+                      items: districts,
+                      onChanged: (v) => _changeFilter(() {
+                        _district = v;
+                        _city = null;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _drop(
+                      hint: 'City',
+                      value: _city,
+                      items: cities,
+                      onChanged: (v) => _changeFilter(() => _city = v),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _label('HOSPITAL AVAILABILITY'),
+              if (_loadingHospitals)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_loadError != null)
+                Center(
+                  child: TextButton(
+                    onPressed: _loadHospitals,
+                    child: Text('$_loadError. Tap to retry'),
+                  ),
+                )
+              else if (list.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
+                    child: Text('No hospitals found',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.gray400)),
+                  ),
+                )
+              else
+                for (final h in list)
+                  _card(
+                    selected: _hospitalId == h.id,
+                    onTap: () {
+                      if (h.isFull) {
+                        _snack('This hospital OPD is full');
+                        return;
+                      }
+                      setState(() {
+                        _hospital = h.name;
+                        _hospitalId = h.id;
+                        _doctorList = [];
+                        _doctorIdx = null;
+                      });
+                      _loadDoctors();
+                    },
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary100,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Icon(Icons.local_hospital_outlined,
+                              size: 16, color: AppColors.primary300),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(h.name,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary500)),
+                              Row(
                                 children: [
-                                  Text(h.name,
+                                  Icon(Icons.circle, size: 8, color: h.color),
+                                  const SizedBox(width: 4),
+                                  Text(h.label,
                                       style: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.primary500)),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.circle, size: 8, color: h.color),
-                                      const SizedBox(width: 4),
-                                      Text(h.label,
-                                          style: const TextStyle(
-                                              fontSize: 11,
-                                              color: AppColors.gray400)),
-                                    ],
-                                  ),
+                                          fontSize: 11,
+                                          color: AppColors.gray400)),
                                 ],
                               ),
-                            ),
-                            Icon(
-                              _hospital == h.name
-                                  ? Icons.check_circle
-                                  : Icons.chevron_right,
-                              color: _hospital == h.name
-                                  ? AppColors.primary300
-                                  : AppColors.gray400,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                  ],
-                ),
+                        Icon(
+                          _hospitalId == h.id
+                              ? Icons.check_circle
+                              : Icons.chevron_right,
+                          color: _hospitalId == h.id
+                              ? AppColors.primary300
+                              : AppColors.gray400,
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
         ),
+        const SizedBox(height: 8),
         _primaryBtn('Book Appointment', () {
           if (_hospital == null) {
             _snack('Please select a hospital');
@@ -444,79 +476,86 @@ class AppointmentsTabState extends State<AppointmentsTab> {
           i,
     ];
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('Appointment Booking', step: '1 / 3'),
-        const SizedBox(height: 12),
-        _search((v) => setState(() => _doctorQuery = v),
-            hint: 'Search doctor, speciality...'),
-        const SizedBox(height: 14),
-        _label('APPOINTMENT DETAILS'),
-        _field(_hospital ?? 'Select hospital',
-            trailing: Icons.keyboard_arrow_down, onTap: () => _go(0)),
-        const SizedBox(height: 8),
-        _field(_dateLabel, leading: Icons.calendar_today_outlined, onTap: _pickDate),
-        const SizedBox(height: 8),
-        _drop(
-          hint: 'Session',
-          value: _session,
-          items: _sessions.keys.toList(),
-          onChanged: (v) {
-            setState(() => _session = v ?? _session);
-            _refreshWaiting();
-          },
-          bordered: true,
-        ),
-        const SizedBox(height: 14),
-        _label('DOCTOR AVAILABILITY & QUEUE'),
         Expanded(
-          child: docs.isEmpty
-              ? const Center(
-                  child: Text('No doctors found',
-                      style: TextStyle(fontSize: 12, color: AppColors.gray400)))
-              : ListView(
-                  children: [
-                    for (final i in docs)
-                      _card(
-                        selected: _doctorIdx == i,
-                        onTap: () => setState(() => _doctorIdx = i),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(_doctorList[i].name,
-                                      style: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.primary500)),
-                                  Text(_doctorList[i].speciality,
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.gray400)),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary100,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text('${_doctorList[i].waiting} waiting',
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              _header('Appointment Booking', step: '1 / 3'),
+              const SizedBox(height: 12),
+              _search((v) => setState(() => _doctorQuery = v),
+                  hint: 'Search doctor, speciality...'),
+              const SizedBox(height: 14),
+              _label('APPOINTMENT DETAILS'),
+              _field(_hospital ?? 'Select hospital',
+                  trailing: Icons.keyboard_arrow_down, onTap: () => _go(0)),
+              const SizedBox(height: 8),
+              _field(_dateLabel,
+                  leading: Icons.calendar_today_outlined, onTap: _pickDate),
+              const SizedBox(height: 8),
+              _drop(
+                hint: 'Session',
+                value: _session,
+                items: _sessions.keys.toList(),
+                onChanged: (v) {
+                  setState(() => _session = v ?? _session);
+                  _refreshWaiting();
+                },
+                bordered: true,
+              ),
+              const SizedBox(height: 14),
+              _label('DOCTOR AVAILABILITY & QUEUE'),
+              if (docs.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
+                    child: Text('No doctors found',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.gray400)),
+                  ),
+                )
+              else
+                for (final i in docs)
+                  _card(
+                    selected: _doctorIdx == i,
+                    onTap: () => setState(() => _doctorIdx = i),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_doctorList[i].name,
                                   style: const TextStyle(
-                                      fontSize: 11,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.bold,
-                                      color: AppColors.primary400)),
-                            ),
-                          ],
+                                      color: AppColors.primary500)),
+                              Text(_doctorList[i].speciality,
+                                  style: const TextStyle(
+                                      fontSize: 11, color: AppColors.gray400)),
+                            ],
+                          ),
                         ),
-                      ),
-                  ],
-                ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary100,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text('${_doctorList[i].waiting} waiting',
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.primary400)),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
         ),
+        const SizedBox(height: 8),
         _primaryBtn('Next', () {
           if (_hospital == null) {
             _snack('Please select a hospital');
@@ -992,7 +1031,12 @@ class _ConfirmedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) onBackToHome();
+      },
+      child: Scaffold(
       backgroundColor: AppColors.primary100,
       body: SafeArea(
         child: Padding(
@@ -1083,6 +1127,7 @@ class _ConfirmedScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

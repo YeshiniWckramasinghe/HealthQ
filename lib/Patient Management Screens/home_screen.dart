@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
 import '../services/booking_service.dart';
 import 'appointments_tab.dart';
@@ -26,7 +27,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // Inside the booking flow: go back one step
+        if (_index == 1 && (_apptKey.currentState?.goBack() ?? false)) return;
+        // Any other tab: go to Home first
+        if (_index != 0) {
+          setState(() => _index = 0);
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
       backgroundColor: AppColors.primary100,
       body: SafeArea(
         child: IndexedStack(
@@ -51,7 +65,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
+      // hide the bottom bar while the keyboard is open
+      bottomNavigationBar: MediaQuery.of(context).viewInsets.bottom > 0
+          ? null
+          : BottomNavigationBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),
         type: BottomNavigationBarType.fixed,
@@ -69,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(
               icon: Icon(Icons.person_outline), label: 'Profile'),
         ],
+      ),
       ),
     );
   }
