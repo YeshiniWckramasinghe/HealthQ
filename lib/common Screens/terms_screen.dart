@@ -3,21 +3,64 @@ import '../theme/app_colors.dart';
 import '../Patient Management Screens/home_screen.dart';
 import 'login_screen.dart';
 
+import '../Doctor Management Screens/doctor_dashboard_screen.dart';
+import '../OPD Management Screens/home_dashboard_screen.dart';
+import 'staff_login_screen.dart';
+
 class TermsScreen extends StatelessWidget {
-  const TermsScreen({super.key});
+  final String role; // 'doctor', 'nurse', or 'patient'
+  final Map<String, dynamic>? staffData;
+
+  const TermsScreen({
+    super.key,
+    this.role = 'patient',
+    this.staffData,
+  });
 
   void _decline(BuildContext context) {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
-    );
+    if (role == 'doctor' || role == 'nurse') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const StaffLoginScreen()),
+        (route) => false,
+      );
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+    }
   }
 
   void _accept(BuildContext context) {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-      (route) => false,
-    );
+    if (role == 'doctor') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => DoctorDashboardScreen(
+            doctorName: staffData?['name'] ?? 'Dr. S. Perera',
+            staffId: staffData?['staffId'] ?? 'DOC1001-0001',
+            hospital: staffData?['hospital'] ?? 'Government Hospital — Colombo',
+          ),
+        ),
+        (route) => false,
+      );
+    } else if (role == 'nurse') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => HomeDashboardScreen(
+            nurseName: staffData?['name'],
+            nurseId: staffData?['staffId'],
+            department: staffData?['department'],
+            hospital: staffData?['hospital'],
+          ),
+        ),
+        (route) => false,
+      );
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    }
   }
 
   @override

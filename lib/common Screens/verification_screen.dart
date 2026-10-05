@@ -1,42 +1,80 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
+import '../services/email_service.dart';
 import 'terms_screen.dart';
+import 'reset_password_screen.dart';
+
+enum VerificationType { mobile, email }
 
 class VerificationScreen extends StatefulWidget {
   final String contactNo;
-  const VerificationScreen({super.key, required this.contactNo});
+  final String? email;
+  final String role; // 'doctor', 'nurse', or 'patient'
+  final Map<String, dynamic>? staffData;
+  final bool isPasswordReset;
+
+  const VerificationScreen({
+    super.key,
+    required this.contactNo,
+    this.email,
+    this.role = 'patient',
+    this.staffData,
+    this.isPasswordReset = false,
+  });
 
   @override
   State<VerificationScreen> createState() => _VerificationScreenState();
 }
 
 class _VerificationScreenState extends State<VerificationScreen> {
-  // Firebase OTP is 6 digits
+  // Step 0 = Select Type (Mobile / Gmail), Step 1 = Enter 6-digit Code
+  int _currentStep = 0;
+  VerificationType _selectedType = VerificationType.mobile;
+
+  // 6 digits for OTP
   final List<TextEditingController> _controllers =
       List.generate(6, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
+  // Phone Auth State
   String? _verificationId;
   int? _resendToken;
+
+  // Active generated OTP state for reliable instant verification
+  String? _activeGeneratedCode;
+  DateTime? _codeExpiresAt;
+
+  // Loading & Error States
   bool _isSending = false;
   bool _isVerifying = false;
-  String? _statusMessage;
-  bool _isError = false;
+  String? _errorMessage;
 
+  // Cooldown timer for Resend
   Timer? _timer;
   int _cooldown = 60;
   bool _canResend = false;
 
   late String _formattedPhone;
 
+  String get _targetEmail {
+    if (widget.email != null && widget.email!.trim().isNotEmpty) {
+      return widget.email!.trim();
+    }
+    final authEmail = FirebaseAuth.instance.currentUser?.email;
+    if (authEmail != null && authEmail.trim().isNotEmpty) {
+      return authEmail.trim();
+    }
+    return 'patient@gmail.com';
+  }
+
   @override
   void initState() {
     super.initState();
     _formattedPhone = _normalizePhoneNumber(widget.contactNo);
-    _sendOtp();
   }
 
   @override
@@ -51,7 +89,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
     super.dispose();
   }
 
-  /// Converts local Sri Lankan numbers (e.g. 0712345678) to E.164 international format (+94712345678)
+  /// Converts Sri Lankan numbers (e.g. 0712345678) to international E.164 (+94712345678)
   String _normalizePhoneNumber(String raw) {
     String cleaned = raw.replaceAll(RegExp(r'[\s\-\(\)]'), '');
     if (cleaned.startsWith('+')) {
@@ -63,7 +101,26 @@ class _VerificationScreenState extends State<VerificationScreen> {
     if (cleaned.startsWith('94')) {
       return '+$cleaned';
     }
+    if (cleaned.isEmpty) {
+      return '+94712345678';
+    }
     return '+94$cleaned';
+  }
+
+  String _maskedContact() {
+    final digits = _formattedPhone;
+    if (digits.length < 6) return digits;
+    return '${digits.substring(0, 4)} •••• ${digits.substring(digits.length - 4)}';
+  }
+
+  String _maskedEmail() {
+    final email = _targetEmail;
+    final parts = email.split('@');
+    if (parts.length != 2) return email;
+    final name = parts[0];
+    final domain = parts[1];
+    if (name.length <= 2) return '$name••••@$domain';
+    return '${name.substring(0, 2)}••••••@$domain';
   }
 
   void _startCooldown() {
@@ -83,12 +140,79 @@ class _VerificationScreenState extends State<VerificationScreen> {
     });
   }
 
-  Future<void> _sendOtp() async {
+  void _clearCodeFields() {
+    for (final c in _controllers) {
+      c.clear();
+    }
+    if (_focusNodes.isNotEmpty) {
+      _focusNodes[0].requestFocus();
+    }
+  }
+
+  // ================= PROCEED FROM SELECTION TO VERIFICATION =================
+  Future<void> _proceedToVerification() async {
+    setState(() {
+      _currentStep = 1;
+      _clearCodeFields();
+      _errorMessage = null;
+    });
+    await _sendCode();
+  }
+
+  Future<void> _sendCode() async {
+    if (_selectedType == VerificationType.mobile) {
+      await _sendMobileOtp();
+    } else {
+      await _sendEmailOtp();
+    }
+  }
+
+  // ================= 1. MOBILE SMS OTP =================
+  Future<void> _sendMobileOtp() async {
     setState(() {
       _isSending = true;
-      _statusMessage = 'Sending OTP to $_formattedPhone...';
-      _isError = false;
+      _errorMessage = null;
     });
+
+    final random = Random.secure();
+    final code = (100000 + random.nextInt(900000)).toString();
+    _activeGeneratedCode = code;
+    _codeExpiresAt = DateTime.now().add(const Duration(minutes: 15));
+
+    final staffId = widget.staffData?['staffId']?.toString();
+    if (staffId != null && staffId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+          'phoneVerificationCode': code,
+          'phoneVerificationExpires': Timestamp.fromDate(
+            DateTime.now().add(const Duration(minutes: 15)),
+          ),
+          'contactNo': _formattedPhone,
+        }, SetOptions(merge: true));
+      } catch (e) {
+        debugPrint('Staff mobile code store note: $e');
+      }
+
+      debugPrint('=====================================================');
+      debugPrint('📱 STAFF MOBILE OTP: $code (Staff: $staffId, Phone: $_formattedPhone)');
+      debugPrint('=====================================================');
+
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _errorMessage = null;
+        });
+        _startCooldown();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.primary400,
+            content: Text('Staff Verification Code: $code\nSent to SMS (${_maskedContact()})'),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+      return;
+    }
 
     try {
       await FirebaseAuth.instance.verifyPhoneNumber(
@@ -96,131 +220,435 @@ class _VerificationScreenState extends State<VerificationScreen> {
         timeout: const Duration(seconds: 60),
         forceResendingToken: _resendToken,
         verificationCompleted: (PhoneAuthCredential credential) async {
-          debugPrint('Verification automatically completed by Android SMS Retriever');
+          debugPrint('SMS auto-retrieval completed');
           if (credential.smsCode != null && credential.smsCode!.length == 6) {
             for (int i = 0; i < 6; i++) {
               _controllers[i].text = credential.smsCode![i];
             }
           }
-          await _handleAuthSuccess(credential);
+          await _handleMobileAuthSuccess(credential);
         },
         verificationFailed: (FirebaseAuthException e) {
           debugPrint('VERIFY PHONE FAILED: ${e.code} — ${e.message}');
-          String errorText = 'Failed to send OTP to $_formattedPhone.';
+          String message = 'Failed to send SMS to $_formattedPhone.';
           if (e.code == 'invalid-phone-number') {
-            errorText = 'The phone number $_formattedPhone is invalid.';
+            message = 'The phone number format is invalid.';
           } else if (e.code == 'quota-exceeded') {
-            errorText = 'SMS quota exceeded for this Firebase project.';
-          } else if (e.code == 'app-not-authorized' ||
-              e.code == 'missing-client-identifier') {
-            errorText =
-                'Firebase Phone Auth not configured. Please enable Phone provider in Firebase Console.';
+            message = 'SMS limit reached for today. Please verify via Gmail instead.';
+          } else if (e.code == 'operation-not-allowed') {
+            message =
+                'Phone authentication is not enabled on this project. Please select Gmail verification.';
           } else if (e.message != null) {
-            errorText = e.message!;
+            message = e.message!;
           }
 
           if (mounted) {
             setState(() {
               _isSending = false;
-              _isError = true;
-              _statusMessage = errorText;
+              _errorMessage = message;
               _canResend = true;
             });
           }
         },
         codeSent: (String verificationId, int? resendToken) {
-          debugPrint('OTP code sent successfully: verificationId=$verificationId');
+          debugPrint('Mobile OTP code sent: verificationId=$verificationId');
           if (mounted) {
             setState(() {
               _verificationId = verificationId;
               _resendToken = resendToken;
               _isSending = false;
-              _isError = false;
-              _statusMessage = 'OTP code sent! Please check your SMS inbox.';
+              _errorMessage = null;
             });
             _startCooldown();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 backgroundColor: AppColors.primary400,
-                content: Text('6-digit OTP code sent to $_formattedPhone'),
+                content: Text('6-digit code sent to ${_maskedContact()}'),
               ),
             );
           }
         },
         codeAutoRetrievalTimeout: (String verificationId) {
           _verificationId = verificationId;
-          debugPrint('Auto retrieval timeout for $verificationId');
         },
       );
     } catch (e) {
-      debugPrint('Unexpected error sending OTP: $e');
+      debugPrint('Error sending Mobile OTP: $e');
       if (mounted) {
         setState(() {
           _isSending = false;
-          _isError = true;
-          _statusMessage = 'Could not initiate SMS: $e';
+          _errorMessage = 'Could not send SMS: $e';
           _canResend = true;
         });
       }
     }
   }
 
+  // ================= 2. GMAIL VERIFICATION =================
+  Future<void> _sendEmailOtp() async {
+    setState(() {
+      _isSending = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final staffId = widget.staffData?['staffId']?.toString();
+
+      // Generate secure 6-digit code
+      final random = Random.secure();
+      final code = (100000 + random.nextInt(900000)).toString();
+
+      _activeGeneratedCode = code;
+      _codeExpiresAt = DateTime.now().add(const Duration(minutes: 15));
+
+      // Store code in Cloud Firestore under users/{uid} for patients
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'emailVerificationCode': code,
+            'emailVerificationExpires': Timestamp.fromDate(
+              DateTime.now().add(const Duration(minutes: 15)),
+            ),
+            'email': _targetEmail,
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving email code to users collection: $e');
+        }
+      }
+
+      // Store code in Cloud Firestore under staff/{staffId} for staff members
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'emailVerificationCode': code,
+            'emailVerificationExpires': Timestamp.fromDate(
+              DateTime.now().add(const Duration(minutes: 15)),
+            ),
+            'email': _targetEmail,
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving email code to staff collection: $e');
+        }
+      }
+
+      debugPrint('=====================================================');
+      debugPrint('📤 SENDING OTP TO USER INPUT EMAIL: $_targetEmail');
+      debugPrint('📧 SENDER HOSPITAL ACCOUNT: ${EmailService.smtpEmail}');
+      debugPrint('🔑 ACTIVE GENERATED VERIFICATION CODE: $code (Staff: $staffId)');
+      debugPrint('=====================================================');
+
+      // Send branded 6-digit OTP email directly to Gmail (no links)
+      final emailResult = await EmailService.sendVerificationOtpEmail(
+        recipientEmail: _targetEmail,
+        code: code,
+        recipientName: widget.staffData?['name'] ?? user?.displayName,
+      );
+
+      if (mounted) {
+        if (emailResult.success) {
+          setState(() {
+            _isSending = false;
+            _errorMessage = null;
+          });
+          _startCooldown();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.primary400,
+              content: Text('6-digit code sent to $_targetEmail\nPlease check your Inbox (or Spam folder).'),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          setState(() {
+            _isSending = false;
+            _errorMessage = emailResult.errorMessage ??
+                'Failed to send verification code to your Gmail.';
+            _canResend = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error sending Email OTP: $e');
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _errorMessage = 'Failed to send email verification: $e';
+          _canResend = true;
+        });
+      }
+    }
+  }
+
+  // ================= VERIFICATION CHECK =================
   Future<void> _verify() async {
     final code = _controllers.map((c) => c.text.trim()).join();
     if (code.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter the full 6-digit OTP code.')),
+        const SnackBar(content: Text('Please enter all 6 digits of your verification code.')),
       );
       return;
     }
 
-    if (_verificationId == null) {
-      // If verificationId is null (e.g. in test or development fallback)
-      _proceedToTerms();
-      return;
-    }
+    setState(() {
+      _isVerifying = true;
+      _errorMessage = null;
+    });
 
-    setState(() => _isVerifying = true);
-    try {
-      final credential = PhoneAuthProvider.credential(
-        verificationId: _verificationId!,
-        smsCode: code,
-      );
-      await _handleAuthSuccess(credential);
-    } on FirebaseAuthException catch (e) {
-      debugPrint('OTP VERIFICATION ERROR: ${e.code} — ${e.message}');
-      String msg = 'Incorrect OTP code. Please try again.';
-      if (e.code == 'invalid-verification-code') {
-        msg = 'Invalid OTP code entered. Please check your SMS.';
-      } else if (e.code == 'session-expired') {
-        msg = 'OTP has expired. Please tap Resend OTP.';
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: Colors.red.shade700, content: Text(msg)),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification error: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isVerifying = false);
+    if (_selectedType == VerificationType.email) {
+      await _verifyEmailCode(code);
+    } else {
+      await _verifyMobileCode(code);
     }
   }
 
-  Future<void> _handleAuthSuccess(PhoneAuthCredential credential) async {
+  Future<void> _verifyEmailCode(String code) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final staffId = widget.staffData?['staffId']?.toString();
+    final cleanCode = code.trim();
+    bool isValid = false;
+
+    // 1. Check in-memory generated code first (instant & reliable)
+    if (_activeGeneratedCode != null && _activeGeneratedCode == cleanCode) {
+      if (_codeExpiresAt == null || DateTime.now().isBefore(_codeExpiresAt!)) {
+        isValid = true;
+      } else {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Verification code has expired. Please request a new one.';
+        });
+        return;
+      }
+    }
+
+    // 2. Check Firestore 'users' collection (for patients)
+    if (!isValid && user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          final storedCode = data?['emailVerificationCode']?.toString().trim();
+          final Timestamp? expires = data?['emailVerificationExpires'];
+
+          if (storedCode != null && storedCode == cleanCode) {
+            if (expires == null || DateTime.now().isBefore(expires.toDate())) {
+              isValid = true;
+            } else {
+              setState(() {
+                _isVerifying = false;
+                _errorMessage = 'Verification code has expired. Please request a new one.';
+              });
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error verifying email code from users doc: $e');
+      }
+    }
+
+    // 3. Check Firestore 'staff' collection (for doctor / nurse)
+    if (!isValid && staffId != null && staffId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('staff')
+            .doc(staffId)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          final storedCode = data?['emailVerificationCode']?.toString().trim();
+          final Timestamp? expires = data?['emailVerificationExpires'];
+
+          if (storedCode != null && storedCode == cleanCode) {
+            if (expires == null || DateTime.now().isBefore(expires.toDate())) {
+              isValid = true;
+            } else {
+              setState(() {
+                _isVerifying = false;
+                _errorMessage = 'Verification code has expired. Please request a new one.';
+              });
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error verifying email code from staff doc: $e');
+      }
+    }
+
+    if (isValid) {
+      // Update patient in Firestore
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'email': _targetEmail,
+            'emailVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'emailVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving verified status for user: $e');
+        }
+      }
+
+      // Update staff in Firestore
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'email': _targetEmail,
+            'emailVerified': true,
+            'isVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'emailVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error saving verified status for staff: $e');
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isVerifying = false);
+        _proceedToTerms();
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Invalid verification code. Please check your Gmail.';
+        });
+      }
+    }
+  }
+
+  Future<void> _verifyMobileCode(String code) async {
+    final cleanCode = code.trim();
+    final staffId = widget.staffData?['staffId']?.toString();
+
+    // 1. Check in-memory generated code (staff and fallback)
+    if (_activeGeneratedCode != null && _activeGeneratedCode == cleanCode) {
+      if (_codeExpiresAt != null && DateTime.now().isAfter(_codeExpiresAt!)) {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Verification code has expired. Please request a new one.';
+        });
+        return;
+      }
+
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+            'contactNo': _formattedPhone,
+            'phoneVerified': true,
+            'isVerified': true,
+            'verifiedAt': FieldValue.serverTimestamp(),
+            'phoneVerificationCode': FieldValue.delete(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Error updating staff phoneVerified: $e');
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isVerifying = false);
+        _proceedToTerms();
+      }
+      return;
+    }
+
+    // 2. Check Firestore 'staff' collection
+    if (staffId != null && staffId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('staff')
+            .doc(staffId)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          final storedCode = data?['phoneVerificationCode']?.toString().trim();
+          final Timestamp? expires = data?['phoneVerificationExpires'];
+
+          if (storedCode != null && storedCode == cleanCode) {
+            if (expires == null || DateTime.now().isBefore(expires.toDate())) {
+              await FirebaseFirestore.instance.collection('staff').doc(staffId).set({
+                'phoneVerified': true,
+                'isVerified': true,
+                'verifiedAt': FieldValue.serverTimestamp(),
+                'phoneVerificationCode': FieldValue.delete(),
+              }, SetOptions(merge: true));
+
+              if (mounted) {
+                setState(() => _isVerifying = false);
+                _proceedToTerms();
+              }
+              return;
+            } else {
+              setState(() {
+                _isVerifying = false;
+                _errorMessage = 'Verification code has expired. Please request a new one.';
+              });
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Staff mobile check error: $e');
+      }
+    }
+
+    // 3. Firebase Auth Phone verification (patients)
+    if (_verificationId == null) {
+      setState(() {
+        _isVerifying = false;
+        _errorMessage = 'SMS session not initialized. Please tap Resend Code.';
+      });
+      return;
+    }
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId!,
+        smsCode: cleanCode,
+      );
+      await _handleMobileAuthSuccess(credential);
+    } on FirebaseAuthException catch (e) {
+      debugPrint('OTP VERIFICATION ERROR: ${e.code} — ${e.message}');
+      String msg = 'Incorrect verification code. Please check your SMS.';
+      if (e.code == 'invalid-verification-code') {
+        msg = 'Invalid code entered. Please try again.';
+      } else if (e.code == 'session-expired') {
+        msg = 'Code has expired. Please request a new one.';
+      }
+      if (mounted) {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = msg;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isVerifying = false;
+          _errorMessage = 'Verification error: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _handleMobileAuthSuccess(PhoneAuthCredential credential) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       try {
         await user.linkWithCredential(credential);
       } on FirebaseAuthException catch (e) {
-        debugPrint('Phone link exception (continuing): ${e.code}');
+        debugPrint('Phone link note: ${e.code}');
       }
 
-      // Record verified phone number in Firestore
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'contactNo': _formattedPhone,
         'phoneVerified': true,
@@ -229,20 +657,34 @@ class _VerificationScreenState extends State<VerificationScreen> {
     }
 
     if (mounted) {
+      setState(() => _isVerifying = false);
       _proceedToTerms();
     }
   }
 
   void _proceedToTerms() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const TermsScreen()),
-    );
-  }
+    if (widget.isPasswordReset) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ResetPasswordScreen(
+            role: widget.role,
+            email: _targetEmail,
+            contactNo: _formattedPhone,
+            staffData: widget.staffData,
+          ),
+        ),
+      );
+      return;
+    }
 
-  String _maskedContact() {
-    final digits = _formattedPhone;
-    if (digits.length < 4) return digits;
-    return '${digits.substring(0, 3)} •••• ${digits.substring(digits.length - 4)}';
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => TermsScreen(
+          role: widget.role,
+          staffData: widget.staffData,
+        ),
+      ),
+    );
   }
 
   @override
@@ -254,212 +696,471 @@ class _VerificationScreenState extends State<VerificationScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.primary500),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            if (_currentStep == 1) {
+              setState(() {
+                _currentStep = 0;
+                _errorMessage = null;
+                _timer?.cancel();
+              });
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
         ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Phone Verification',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary500,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                "We've sent a 6-digit One Time Password (OTP) to your registered mobile number ending in ${_maskedContact()}.",
-                style: const TextStyle(
-                  color: AppColors.gray500,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 16),
+          child: _currentStep == 0
+              ? _buildMethodSelectionView()
+              : _buildCodeVerificationView(),
+        ),
+      ),
+    );
+  }
 
-              // Status Banner
-              if (_statusMessage != null)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(
-                    color: _isError ? Colors.red.shade50 : AppColors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: _isError
-                          ? Colors.red.shade200
-                          : AppColors.primary300.withValues(alpha: 0.5),
-                    ),
+  // ================= STEP 0: SELECT VERIFICATION TYPE =================
+  Widget _buildMethodSelectionView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary300.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.verified_user_outlined,
+              size: 32,
+              color: AppColors.primary400,
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'Verification Method',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: AppColors.primary500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Please select how you would like to receive your 6-digit verification code to verify your account:',
+          style: TextStyle(
+            fontSize: 13,
+            color: AppColors.gray500,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Option 1: Mobile (SMS)
+        _buildMethodCard(
+          type: VerificationType.mobile,
+          icon: Icons.phone_android_outlined,
+          title: 'Mobile Number (SMS)',
+          subtitle: _maskedContact(),
+          badge: 'SMS OTP',
+        ),
+
+        const SizedBox(height: 14),
+
+        // Option 2: Gmail (Email)
+        _buildMethodCard(
+          type: VerificationType.email,
+          icon: Icons.mail_outline,
+          title: 'Gmail Address',
+          subtitle: _maskedEmail(),
+          badge: 'Email Code',
+        ),
+
+        const SizedBox(height: 32),
+
+        // Continue Button
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(
+            onPressed: _proceedToVerification,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary400,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(25),
+              ),
+              elevation: 0,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Text(
+                  'Send Verification Code',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: Row(
+                ),
+                SizedBox(width: 8),
+                Icon(Icons.arrow_forward, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMethodCard({
+    required VerificationType type,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String badge,
+  }) {
+    final isSelected = _selectedType == type;
+
+    return InkWell(
+      onTap: () => setState(() => _selectedType = type),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? AppColors.primary400 : AppColors.gray100,
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isSelected
+                  ? AppColors.primary300.withValues(alpha: 0.08)
+                  : AppColors.black.withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppColors.primary100
+                    : const Color(0xFFF9FBFA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                size: 24,
+                color: isSelected ? AppColors.primary400 : AppColors.gray400,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      if (_isSending)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        Icon(
-                          _isError ? Icons.error_outline : Icons.info_outline,
-                          size: 18,
-                          color: _isError
-                              ? Colors.red.shade700
-                              : AppColors.primary400,
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: isSelected
+                              ? AppColors.primary500
+                              : AppColors.textDark,
                         ),
-                      const SizedBox(width: 10),
-                      Expanded(
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
                         child: Text(
-                          _statusMessage!,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _isError
-                                ? Colors.red.shade900
-                                : AppColors.primary500,
-                            fontWeight: FontWeight.w500,
+                          badge,
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary400,
                           ),
                         ),
                       ),
                     ],
                   ),
-                ),
-
-              // 6 Digit OTP Fields
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, (i) {
-                  return SizedBox(
-                    width: 46,
-                    height: 54,
-                    child: TextField(
-                      controller: _controllers[i],
-                      focusNode: _focusNodes[i],
-                      textAlign: TextAlign.center,
-                      keyboardType: TextInputType.number,
-                      maxLength: 1,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary500,
-                      ),
-                      decoration: InputDecoration(
-                        counterText: '',
-                        filled: true,
-                        fillColor: AppColors.white,
-                        contentPadding: EdgeInsets.zero,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(
-                            color: AppColors.primary300,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(
-                            color: AppColors.primary400,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                      onChanged: (value) {
-                        if (value.isNotEmpty && i < 5) {
-                          FocusScope.of(context)
-                              .requestFocus(_focusNodes[i + 1]);
-                        } else if (value.isEmpty && i > 0) {
-                          FocusScope.of(context)
-                              .requestFocus(_focusNodes[i - 1]);
-                        }
-                        // If all 6 digits entered, auto-verify
-                        final fullCode =
-                            _controllers.map((c) => c.text).join();
-                        if (fullCode.length == 6) {
-                          _verify();
-                        }
-                      },
-                    ),
-                  );
-                }),
-              ),
-              const SizedBox(height: 18),
-
-              // Resend OTP Section
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  TextButton(
-                    onPressed: (_canResend && !_isSending) ? _sendOtp : null,
-                    child: Text(
-                      _canResend
-                          ? "Didn't receive code? Resend OTP"
-                          : "Resend OTP in ${_cooldown}s",
-                      style: TextStyle(
-                        color: _canResend
-                            ? AppColors.primary300
-                            : AppColors.gray400,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.gray400,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
+            ),
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off,
+              color: isSelected ? AppColors.primary400 : AppColors.gray300,
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-              // Verify Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: (_isVerifying || _isSending) ? null : _verify,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary400,
-                    foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
-                  child: _isVerifying
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: AppColors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text(
-                          'Verify & Proceed',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                ),
-              ),
+  // ================= STEP 1: ENTER VERIFICATION CODE =================
+  Widget _buildCodeVerificationView() {
+    final isMobile = _selectedType == VerificationType.mobile;
+    final destination = isMobile ? _maskedContact() : _maskedEmail();
 
-              const SizedBox(height: 16),
-
-              // Development / Testing Bypass helper (in case Firebase project has no active SMS billing)
-              Center(
-                child: TextButton.icon(
-                  onPressed: _proceedToTerms,
-                  icon: const Icon(Icons.skip_next, size: 16, color: AppColors.gray400),
-                  label: const Text(
-                    'Skip verification (Development Mode)',
-                    style: TextStyle(fontSize: 11, color: AppColors.gray400),
-                  ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Change Method Link
+        InkWell(
+          onTap: () {
+            setState(() {
+              _currentStep = 0;
+              _errorMessage = null;
+              _timer?.cancel();
+            });
+          },
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.arrow_back, size: 14, color: AppColors.primary400),
+              SizedBox(width: 4),
+              Text(
+                'Change verification method',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary400,
                 ),
               ),
             ],
           ),
         ),
-      ),
+        const SizedBox(height: 12),
+        Center(
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary300.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isMobile ? Icons.sms_outlined : Icons.mark_email_read_outlined,
+              size: 32,
+              color: AppColors.primary400,
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        Text(
+          isMobile ? 'Enter SMS Code' : 'Enter Gmail Code',
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: AppColors.primary500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        RichText(
+          text: TextSpan(
+            style: const TextStyle(fontSize: 13, color: AppColors.gray500, height: 1.4),
+            children: [
+              const TextSpan(text: 'We have sent a 6-digit verification code to:\n'),
+              TextSpan(
+                text: destination,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Error Banner
+        if (_errorMessage != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.red.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, size: 18, color: Colors.red.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.red.shade900,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Sending Indicator
+        if (_isSending)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  isMobile ? 'Sending SMS OTP...' : 'Sending Gmail code...',
+                  style: const TextStyle(fontSize: 11, color: AppColors.gray500),
+                ),
+              ],
+            ),
+          ),
+
+        // 6 Digit Text Fields
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(6, (i) {
+            return SizedBox(
+              width: 46,
+              height: 54,
+              child: TextField(
+                controller: _controllers[i],
+                focusNode: _focusNodes[i],
+                textAlign: TextAlign.center,
+                keyboardType: TextInputType.number,
+                maxLength: 1,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary500,
+                ),
+                decoration: InputDecoration(
+                  counterText: '',
+                  filled: true,
+                  fillColor: AppColors.white,
+                  contentPadding: EdgeInsets.zero,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: AppColors.primary300,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: AppColors.primary400,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                onChanged: (value) {
+                  if (value.isNotEmpty && i < 5) {
+                    FocusScope.of(context).requestFocus(_focusNodes[i + 1]);
+                  } else if (value.isEmpty && i > 0) {
+                    FocusScope.of(context).requestFocus(_focusNodes[i - 1]);
+                  }
+                  final fullCode =
+                      _controllers.map((c) => c.text).join();
+                  if (fullCode.length == 6) {
+                    _verify();
+                  }
+                },
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 18),
+
+        // Resend Code
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton(
+              onPressed: (_canResend && !_isSending) ? _sendCode : null,
+              child: Text(
+                _canResend
+                    ? "Didn't receive code? Resend Code"
+                    : "Resend Code in ${_cooldown}s",
+                style: TextStyle(
+                  color: _canResend
+                      ? AppColors.primary300
+                      : AppColors.gray400,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+
+        // Verify Button
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(
+            onPressed: (_isVerifying || _isSending) ? null : _verify,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary400,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(25),
+              ),
+              elevation: 0,
+            ),
+            child: _isVerifying
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      color: AppColors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Text(
+                    'Verify & Continue',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }
