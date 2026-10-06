@@ -7,7 +7,6 @@ import 'appointments_tab.dart';
 import '../Queue Management Screens/check_in_screen.dart';
 import '../common Screens/login_screen.dart';
 
-
 // ===================================================================
 // HEALTHQ NOTIFICATION MODEL
 // ===================================================================
@@ -28,23 +27,8 @@ class HealthQNotification {
   });
 }
 
-
 // ===================================================================
 // HEALTHQ NOTIFICATION CENTER
-//
-// Queue Status / Estimated Waiting / My Turn screens can use this:
-//
-// HealthQNotificationCenter.add(
-//   const HealthQNotification(
-//     title: 'Appointment Completed',
-//     body: 'Your appointment has been completed successfully.',
-//     time: 'Just now',
-//     icon: Icons.check_circle_outline,
-//     iconColor: Colors.green,
-//   ),
-// );
-//
-// The Notifications tab will automatically refresh.
 // ===================================================================
 
 class HealthQNotificationCenter {
@@ -80,6 +64,91 @@ class HealthQNotificationCenter {
   }
 }
 
+// ===================================================================
+// HEALTHQ QUEUE STATE
+//
+// Queue Status screen can update this shared state.
+// Home screen will automatically refresh the Queue card.
+// ===================================================================
+
+class HealthQQueueState {
+  final String queueNumber;
+  final String hospital;
+  final String doctor;
+  final String speciality;
+  final String date;
+  final String session;
+  final int estimatedWaitMinutes;
+  final int patientsAhead;
+  final String status;
+  final bool active;
+
+  const HealthQQueueState({
+    required this.queueNumber,
+    required this.hospital,
+    required this.doctor,
+    required this.speciality,
+    required this.date,
+    required this.session,
+    required this.estimatedWaitMinutes,
+    required this.patientsAhead,
+    required this.status,
+    this.active = true,
+  });
+}
+
+// ===================================================================
+// HEALTHQ QUEUE CENTER
+//
+// QueueStatusScreen can call:
+//
+// HealthQQueueCenter.update(
+//   queueNumber: '#19',
+//   hospital: 'City General Hospital',
+//   doctor: 'Dr. R. Fernando',
+//   speciality: 'Internal Medicine',
+//   date: '22 Sep 2026',
+//   session: 'Morning (9:00 - 12:00)',
+//   estimatedWaitMinutes: 45,
+//   patientsAhead: 10,
+//   status: 'Waiting',
+// );
+//
+// Home page Queue card will automatically update.
+// ===================================================================
+
+class HealthQQueueCenter {
+  static final ValueNotifier<HealthQQueueState?> state =
+      ValueNotifier<HealthQQueueState?>(null);
+
+  static void update({
+    required String queueNumber,
+    required String hospital,
+    required String doctor,
+    required String speciality,
+    required String date,
+    required String session,
+    required int estimatedWaitMinutes,
+    required int patientsAhead,
+    required String status,
+  }) {
+    state.value = HealthQQueueState(
+      queueNumber: queueNumber,
+      hospital: hospital,
+      doctor: doctor,
+      speciality: speciality,
+      date: date,
+      session: session,
+      estimatedWaitMinutes: estimatedWaitMinutes,
+      patientsAhead: patientsAhead,
+      status: status,
+    );
+  }
+
+  static void clear() {
+    state.value = null;
+  }
+}
 
 // ===================================================================
 // HOME SCREEN
@@ -91,7 +160,6 @@ class HomeScreen extends StatefulWidget {
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
-
 
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
@@ -115,13 +183,11 @@ class _HomeScreenState extends State<HomeScreen> {
     estimatedQueueNumber: '#12',
   );
 
-
   @override
   void initState() {
     super.initState();
     _fetchUserProfile();
   }
-
 
   // =================================================================
   // FETCH USER PROFILE
@@ -149,7 +215,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
-
 
   // =================================================================
   // SIGN OUT
@@ -198,7 +263,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-
   // =================================================================
   // MAIN NAVIGATION
   // =================================================================
@@ -209,13 +273,11 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-
   void _goToAppointments() {
     setState(() {
       _index = 1;
     });
   }
-
 
   void _goToCheckIn() {
     setState(() {
@@ -223,20 +285,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-
   void _goToNotifications() {
     setState(() {
       _index = 3;
     });
   }
 
-
   void _goToProfile() {
     setState(() {
       _index = 4;
     });
   }
-
 
   // =================================================================
   // QUEUE NUMBER GENERATION
@@ -250,11 +309,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return '#$number';
   }
 
-
   CheckInAppointment _withGeneratedQueueNumber(
     CheckInAppointment appointment,
   ) {
-    return CheckInAppointment(
+    final generatedQueueNumber =
+        _generateQueueNumber();
+
+    final updatedAppointment =
+        CheckInAppointment(
       appointmentId: appointment.appointmentId,
       nic: appointment.nic,
       hospital: appointment.hospital,
@@ -265,10 +327,28 @@ class _HomeScreenState extends State<HomeScreen> {
       patient: appointment.patient,
       contact: appointment.contact,
       dateOfBirth: appointment.dateOfBirth,
-      estimatedQueueNumber: _generateQueueNumber(),
+      estimatedQueueNumber:
+          generatedQueueNumber,
     );
-  }
 
+    // ---------------------------------------------------------------
+    // Keep Home Queue card synchronized with generated queue number.
+    // ---------------------------------------------------------------
+
+    HealthQQueueCenter.update(
+      queueNumber: generatedQueueNumber,
+      hospital: appointment.hospital,
+      doctor: appointment.doctor,
+      speciality: appointment.speciality,
+      date: appointment.date,
+      session: appointment.session,
+      estimatedWaitMinutes: 25,
+      patientsAhead: 5,
+      status: 'Waiting',
+    );
+
+    return updatedAppointment;
+  }
 
   // =================================================================
   // BOTTOM NAVIGATION INDEX
@@ -307,7 +387,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-
   void _onBottomNavigationTap(
     int selectedIndex,
   ) {
@@ -330,7 +409,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-
   // =================================================================
   // BUILD
   // =================================================================
@@ -343,7 +421,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: IndexedStack(
           index: _index,
-
           children: [
             // =========================================================
             // HOME
@@ -357,14 +434,12 @@ class _HomeScreenState extends State<HomeScreen> {
               onProfileTap: _goToProfile,
             ),
 
-
             // =========================================================
             // APPOINTMENTS
             // =========================================================
 
             AppointmentsTab(
               onBackToHome: _goToHome,
-
               onAppointmentConfirmed: (appointment) {
                 final appointmentWithQueue =
                     _withGeneratedQueueNumber(
@@ -380,7 +455,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-
             // =========================================================
             // CHECK IN
             // =========================================================
@@ -388,22 +462,39 @@ class _HomeScreenState extends State<HomeScreen> {
             CheckInScreen(
               bookedAppointment:
                   _currentAppointment,
-
               onCheckIn: (appointment) {
                 setState(() {
                   _currentAppointment =
                       appointment;
                 });
+
+                // ---------------------------------------------------
+                // Synchronize current queue information.
+                // ---------------------------------------------------
+
+                final queueNumber =
+                    appointment.estimatedQueueNumber ??
+                        '#${_nextQueueNumber - 1}';
+
+                HealthQQueueCenter.update(
+                  queueNumber: queueNumber,
+                  hospital: appointment.hospital,
+                  doctor: appointment.doctor,
+                  speciality: appointment.speciality,
+                  date: appointment.date,
+                  session: appointment.session,
+                  estimatedWaitMinutes: 25,
+                  patientsAhead: 5,
+                  status: 'Waiting',
+                );
               },
             ),
-
 
             // =========================================================
             // NOTIFICATIONS
             // =========================================================
 
             _buildNotificationsTab(),
-
 
             // =========================================================
             // PROFILE
@@ -414,7 +505,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
-
       // =============================================================
       // SAME BOTTOM NAVIGATION
       // =============================================================
@@ -423,28 +513,20 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBar(
         currentIndex:
             _bottomNavigationIndex,
-
         onTap:
             _onBottomNavigationTap,
-
         type:
             BottomNavigationBarType.fixed,
-
         backgroundColor:
             AppColors.white,
-
         selectedItemColor:
             AppColors.primary300,
-
         unselectedItemColor:
             AppColors.gray400,
-
         selectedFontSize:
             11,
-
         unselectedFontSize:
             11,
-
         items: const [
           BottomNavigationBarItem(
             icon: Icon(
@@ -455,7 +537,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             label: 'Home',
           ),
-
           BottomNavigationBarItem(
             icon: Icon(
               Icons.calendar_today_outlined,
@@ -465,7 +546,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             label: 'Appointments',
           ),
-
           BottomNavigationBarItem(
             icon: Icon(
               Icons.notifications_none,
@@ -475,7 +555,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             label: 'Notifications',
           ),
-
           BottomNavigationBarItem(
             icon: Icon(
               Icons.person_outline,
@@ -490,7 +569,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
   // =================================================================
   // NOTIFICATIONS TAB
   // =================================================================
@@ -501,7 +579,6 @@ class _HomeScreenState extends State<HomeScreen> {
       valueListenable:
           HealthQNotificationCenter
               .notifications,
-
       builder: (
         context,
         notifications,
@@ -510,7 +587,6 @@ class _HomeScreenState extends State<HomeScreen> {
         return ListView(
           padding:
               const EdgeInsets.all(16),
-
           children: [
             const Text(
               'Notifications & Alerts',
@@ -527,26 +603,17 @@ class _HomeScreenState extends State<HomeScreen> {
               height: 12,
             ),
 
-
-            // =======================================================
-            // DYNAMIC NOTIFICATIONS
-            // =======================================================
-
             ...notifications.map(
               (notification) {
                 return _notificationCard(
                   title:
                       notification.title,
-
                   body:
                       notification.body,
-
                   time:
                       notification.time,
-
                   icon:
                       notification.icon,
-
                   iconColor:
                       notification.iconColor,
                 );
@@ -557,7 +624,6 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
   }
-
 
   // =================================================================
   // NOTIFICATION CARD
@@ -575,29 +641,23 @@ class _HomeScreenState extends State<HomeScreen> {
           const EdgeInsets.only(
         bottom: 10,
       ),
-
       padding:
           const EdgeInsets.all(14),
-
       decoration:
           BoxDecoration(
         color:
             AppColors.white,
-
         borderRadius:
             BorderRadius.circular(12),
-
         border:
             Border.all(
           color:
               AppColors.gray100,
         ),
       ),
-
       child: Row(
         crossAxisAlignment:
             CrossAxisAlignment.start,
-
         children: [
           Icon(
             icon,
@@ -614,11 +674,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment:
                   CrossAxisAlignment.start,
-
               children: [
                 Text(
                   title,
-
                   style:
                       const TextStyle(
                     fontSize: 13,
@@ -635,7 +693,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 Text(
                   body,
-
                   style:
                       const TextStyle(
                     fontSize: 11,
@@ -651,7 +708,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 Text(
                   time,
-
                   style:
                       const TextStyle(
                     fontSize: 10,
@@ -666,7 +722,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
 
   // =================================================================
   // PROFILE TAB
@@ -703,7 +758,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return SingleChildScrollView(
       padding:
           const EdgeInsets.all(16),
-
       child: Column(
         children: [
           // =========================================================
@@ -713,33 +767,26 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding:
                 const EdgeInsets.all(20),
-
             decoration:
                 BoxDecoration(
               color:
                   AppColors.white,
-
               borderRadius:
                   BorderRadius.circular(16),
-
               border:
                   Border.all(
                 color:
                     AppColors.gray100,
               ),
             ),
-
             child: Column(
               children: [
                 CircleAvatar(
                   radius: 36,
-
                   backgroundColor:
                       AppColors.primary300,
-
                   child: Text(
                     initial,
-
                     style:
                         const TextStyle(
                       fontSize: 32,
@@ -757,7 +804,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 Text(
                   name,
-
                   style:
                       const TextStyle(
                     fontSize: 18,
@@ -774,7 +820,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 Text(
                   email,
-
                   style:
                       const TextStyle(
                     fontSize: 12,
@@ -793,26 +838,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     horizontal: 12,
                     vertical: 4,
                   ),
-
                   decoration:
                       BoxDecoration(
                     color:
                         AppColors.primary100,
-
                     borderRadius:
                         BorderRadius.circular(20),
-
                     border:
                         Border.all(
                       color:
                           AppColors.primary200,
                     ),
                   ),
-
                   child:
                       const Text(
                     'Registered Patient',
-
                     style:
                         TextStyle(
                       fontSize: 11,
@@ -827,11 +867,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-
           const SizedBox(
             height: 16,
           ),
-
 
           // =========================================================
           // PROFILE DETAILS
@@ -840,22 +878,18 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding:
                 const EdgeInsets.all(16),
-
             decoration:
                 BoxDecoration(
               color:
                   AppColors.white,
-
               borderRadius:
                   BorderRadius.circular(14),
-
               border:
                   Border.all(
                 color:
                     AppColors.gray100,
               ),
             ),
-
             child: Column(
               children: [
                 _profileRow(
@@ -887,11 +921,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-
           const SizedBox(
             height: 24,
           ),
-
 
           // =========================================================
           // LOG OUT
@@ -900,30 +932,25 @@ class _HomeScreenState extends State<HomeScreen> {
           SizedBox(
             width:
                 double.infinity,
-
             child:
                 OutlinedButton.icon(
               onPressed:
                   _signOut,
-
               icon:
                   const Icon(
                 Icons.logout,
                 color:
                     Colors.red,
               ),
-
               label:
                   const Text(
                 'Log Out',
-
                 style:
                     TextStyle(
                   color:
                       Colors.red,
                 ),
               ),
-
               style:
                   OutlinedButton.styleFrom(
                 side:
@@ -931,12 +958,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   color:
                       Colors.red.shade300,
                 ),
-
                 padding:
                     const EdgeInsets.symmetric(
                   vertical: 14,
                 ),
-
                 shape:
                     RoundedRectangleBorder(
                   borderRadius:
@@ -949,7 +974,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
 
   // =================================================================
   // PROFILE ROW
@@ -977,11 +1001,9 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
-
             children: [
               Text(
                 label,
-
                 style:
                     const TextStyle(
                   fontSize: 10,
@@ -996,7 +1018,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
               Text(
                 value,
-
                 style:
                     const TextStyle(
                   fontSize: 13,
@@ -1014,7 +1035,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-
 // ===================================================================
 // HOME TAB
 // ===================================================================
@@ -1030,7 +1050,6 @@ class _HomeTab extends StatelessWidget {
 
   final VoidCallback onProfileTap;
 
-
   const _HomeTab({
     required this.userProfile,
     required this.appointment,
@@ -1038,7 +1057,6 @@ class _HomeTab extends StatelessWidget {
     required this.onCheckIn,
     required this.onProfileTap,
   });
-
 
   @override
   Widget build(BuildContext context) {
@@ -1057,11 +1075,9 @@ class _HomeTab extends StatelessWidget {
             ? name[0].toUpperCase()
             : 'P';
 
-
     return ListView(
       padding:
           const EdgeInsets.all(16),
-
       children: [
         // ===========================================================
         // HEADER
@@ -1072,17 +1088,13 @@ class _HomeTab extends StatelessWidget {
             GestureDetector(
               onTap:
                   onProfileTap,
-
               child:
                   CircleAvatar(
                 radius: 18,
-
                 backgroundColor:
                     AppColors.primary300,
-
                 child: Text(
                   initial,
-
                   style:
                       const TextStyle(
                     color:
@@ -1095,21 +1107,17 @@ class _HomeTab extends StatelessWidget {
               ),
             ),
 
-
             const SizedBox(
               width: 10,
             ),
-
 
             Expanded(
               child: Column(
                 crossAxisAlignment:
                     CrossAxisAlignment.start,
-
                 children: [
                   Text(
                     'Hello, $name',
-
                     style:
                         const TextStyle(
                       fontWeight:
@@ -1122,7 +1130,6 @@ class _HomeTab extends StatelessWidget {
 
                   const Text(
                     'HealthQ OPD Portal',
-
                     style:
                         TextStyle(
                       fontSize: 11,
@@ -1134,13 +1141,10 @@ class _HomeTab extends StatelessWidget {
               ),
             ),
 
-
             const CircleAvatar(
               radius: 18,
-
               backgroundColor:
                   AppColors.white,
-
               child:
                   Icon(
                 Icons.notifications_none,
@@ -1152,11 +1156,9 @@ class _HomeTab extends StatelessWidget {
           ],
         ),
 
-
         const SizedBox(
           height: 16,
         ),
-
 
         // ===========================================================
         // BANNER
@@ -1164,15 +1166,12 @@ class _HomeTab extends StatelessWidget {
 
         Container(
           height: 130,
-
           padding:
               const EdgeInsets.all(14),
-
           decoration:
               BoxDecoration(
             borderRadius:
                 BorderRadius.circular(14),
-
             gradient:
                 const LinearGradient(
               colors: [
@@ -1181,15 +1180,12 @@ class _HomeTab extends StatelessWidget {
               ],
             ),
           ),
-
           child: Column(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
-
             children: [
               const Text(
                 'National Health Drive',
-
                 style:
                     TextStyle(
                   color:
@@ -1206,14 +1202,12 @@ class _HomeTab extends StatelessWidget {
 
               Text(
                 'Get your health checked, join the queue number and consult today.',
-
                 style:
                     TextStyle(
                   color:
                       AppColors.white.withValues(
                     alpha: 0.85,
                   ),
-
                   fontSize: 12,
                 ),
               ),
@@ -1226,20 +1220,16 @@ class _HomeTab extends StatelessWidget {
                   horizontal: 10,
                   vertical: 4,
                 ),
-
                 decoration:
                     BoxDecoration(
                   color:
                       AppColors.primary300,
-
                   borderRadius:
                       BorderRadius.circular(6),
                 ),
-
                 child:
                     const Text(
                   'Announcements',
-
                   style:
                       TextStyle(
                     color:
@@ -1252,11 +1242,9 @@ class _HomeTab extends StatelessWidget {
           ),
         ),
 
-
         const SizedBox(
           height: 18,
         ),
-
 
         // ===========================================================
         // UPCOMING APPOINTMENT TITLE
@@ -1264,7 +1252,6 @@ class _HomeTab extends StatelessWidget {
 
         const Text(
           'UPCOMING APPOINTMENT',
-
           style:
               TextStyle(
             fontSize: 11,
@@ -1275,233 +1262,263 @@ class _HomeTab extends StatelessWidget {
           ),
         ),
 
-
         const SizedBox(
           height: 8,
         ),
-
 
         // ===========================================================
         // UPCOMING APPOINTMENT CARD
         // ===========================================================
 
-        Container(
-          padding:
-              const EdgeInsets.all(14),
+        ValueListenableBuilder<HealthQQueueState?>(
+          valueListenable:
+              HealthQQueueCenter.state,
+          builder: (
+            context,
+            queueState,
+            child,
+          ) {
+            final queueNumber =
+                queueState?.queueNumber ??
+                    appointment.estimatedQueueNumber ??
+                    '#--';
 
-          decoration:
-              BoxDecoration(
-            color:
-                AppColors.white,
+            final hospital =
+                queueState?.hospital ??
+                    appointment.hospital;
 
-            borderRadius:
-                BorderRadius.circular(14),
-          ),
+            final doctor =
+                queueState?.doctor ??
+                    appointment.doctor;
 
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            final speciality =
+                queueState?.speciality ??
+                    appointment.speciality;
 
-            children: [
-              Row(
+            final date =
+                queueState?.date ??
+                    appointment.date;
+
+            final session =
+                queueState?.session ??
+                    appointment.session;
+
+            final waitMinutes =
+                queueState?.estimatedWaitMinutes ??
+                    25;
+
+            final patientsAhead =
+                queueState?.patientsAhead ??
+                    5;
+
+            final queueStatus =
+                queueState?.status ??
+                    'Waiting';
+
+            return Container(
+              padding:
+                  const EdgeInsets.all(14),
+              decoration:
+                  BoxDecoration(
+                color:
+                    AppColors.white,
+                borderRadius:
+                    BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child:
-                        Text(
-                      appointment.hospital,
-
-                      style:
-                          const TextStyle(
-                        fontWeight:
-                            FontWeight.bold,
-                        fontSize: 15,
-                        color:
-                            AppColors.primary500,
-                      ),
-                    ),
-                  ),
-
-
-                  // =================================================
-                  // QUEUE BUTTON
-                  // =================================================
-
-                  Material(
-                    color:
-                        Colors.transparent,
-
-                    child:
-                        InkWell(
-                      onTap:
-                          onCheckIn,
-
-                      borderRadius:
-                          BorderRadius.circular(
-                        20,
-                      ),
-
-                      child:
-                          Container(
-                        padding:
-                            const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            Text(
+                          hospital,
+                          style:
+                              const TextStyle(
+                            fontWeight:
+                                FontWeight.bold,
+                            fontSize: 15,
+                            color:
+                                AppColors.primary500,
+                          ),
                         ),
+                      ),
 
-                        decoration:
-                            BoxDecoration(
-                          color:
-                              AppColors.primary300,
+                      // =============================================
+                      // QUEUE BUTTON
+                      // =============================================
 
+                      Material(
+                        color:
+                            Colors.transparent,
+                        child:
+                            InkWell(
+                          onTap:
+                              onCheckIn,
                           borderRadius:
                               BorderRadius.circular(
                             20,
                           ),
-                        ),
-
-                        child:
-                            Text(
-                          'Queue ${appointment.estimatedQueueNumber}',
-
-                          style:
-                              const TextStyle(
-                            color:
-                                AppColors.white,
-                            fontSize: 11,
-                            fontWeight:
-                                FontWeight.bold,
+                          child:
+                              Container(
+                            padding:
+                                const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration:
+                                BoxDecoration(
+                              color:
+                                  AppColors.primary300,
+                              borderRadius:
+                                  BorderRadius.circular(
+                                20,
+                              ),
+                            ),
+                            child:
+                                Text(
+                              'Queue $queueNumber',
+                              style:
+                                  const TextStyle(
+                                color:
+                                    AppColors.white,
+                                fontSize: 11,
+                                fontWeight:
+                                    FontWeight.bold,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ],
-              ),
-
-
-              Text(
-                '${appointment.doctor} — ${appointment.speciality}',
-
-                style:
-                    const TextStyle(
-                  fontSize: 12,
-                  color:
-                      AppColors.gray400,
-                ),
-              ),
-
-
-              const Divider(
-                height: 24,
-              ),
-
-
-              Row(
-                children: [
-                  const Icon(
-                    Icons.access_time,
-                    size: 16,
-                    color:
-                        AppColors.primary300,
+                    ],
                   ),
 
-                  const SizedBox(
-                    width: 6,
-                  ),
-
-                  Expanded(
-                    child:
-                        Text(
-                      '${appointment.date} · ${appointment.session}',
-
-                      style:
-                          const TextStyle(
-                        fontSize: 12,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-                  ),
-
-                  const Text(
-                    'Est. Wait: 25 mins',
-
+                  Text(
+                    '$doctor — $speciality',
                     style:
-                        TextStyle(
+                        const TextStyle(
                       fontSize: 12,
                       color:
                           AppColors.gray400,
                     ),
                   ),
-                ],
-              ),
 
+                  const Divider(
+                    height: 24,
+                  ),
 
-              const SizedBox(
-                height: 8,
-              ),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.access_time,
+                        size: 16,
+                        color:
+                            AppColors.primary300,
+                      ),
 
+                      const SizedBox(
+                        width: 6,
+                      ),
 
-              ClipRRect(
-                borderRadius:
-                    BorderRadius.circular(4),
+                      Expanded(
+                        child:
+                            Text(
+                          '$date · $session',
+                          style:
+                              const TextStyle(
+                            fontSize: 12,
+                            fontWeight:
+                                FontWeight.bold,
+                          ),
+                        ),
+                      ),
 
-                child:
-                    const LinearProgressIndicator(
-                  value: 0.6,
-                  minHeight: 5,
-                  backgroundColor:
-                      AppColors.gray100,
-                  color:
-                      AppColors.primary300,
-                ),
-              ),
+                      Text(
+                        'Est. Wait: $waitMinutes mins',
+                        style:
+                            const TextStyle(
+                          fontSize: 12,
+                          color:
+                              AppColors.gray400,
+                        ),
+                      ),
+                    ],
+                  ),
 
+                  const SizedBox(
+                    height: 8,
+                  ),
 
-              const SizedBox(
-                height: 6,
-              ),
-
-
-              const Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
-
-                children: [
-                  Text(
-                    'Consultation in progress',
-
-                    style:
-                        TextStyle(
-                      fontSize: 10,
-                      fontWeight:
-                          FontWeight.bold,
+                  ClipRRect(
+                    borderRadius:
+                        BorderRadius.circular(4),
+                    child:
+                        LinearProgressIndicator(
+                      value:
+                          patientsAhead <= 0
+                              ? 1.0
+                              : (1 -
+                                      (patientsAhead /
+                                          (patientsAhead +
+                                              10)))
+                                  .clamp(
+                                  0.0,
+                                  1.0,
+                                ),
+                      minHeight:
+                          5,
+                      backgroundColor:
+                          AppColors.gray100,
                       color:
-                          AppColors.primary400,
+                          AppColors.primary300,
                     ),
                   ),
 
-                  Text(
-                    'Next slot',
+                  const SizedBox(
+                    height: 6,
+                  ),
 
-                    style:
-                        TextStyle(
-                      fontSize: 10,
-                      color:
-                          AppColors.gray400,
-                    ),
+                  Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        queueStatus ==
+                                'Waiting'
+                            ? 'Consultation in progress'
+                            : queueStatus,
+                        style:
+                            const TextStyle(
+                          fontSize: 10,
+                          fontWeight:
+                              FontWeight.bold,
+                          color:
+                              AppColors.primary400,
+                        ),
+                      ),
+
+                      Text(
+                        '$patientsAhead ahead',
+                        style:
+                            const TextStyle(
+                          fontSize: 10,
+                          color:
+                              AppColors.gray400,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
-          ),
+            );
+          },
         ),
-
 
         const SizedBox(
           height: 16,
         ),
-
 
         // ===========================================================
         // QUICK ACTIONS
@@ -1540,7 +1557,6 @@ class _HomeTab extends StatelessWidget {
     );
   }
 
-
   // =================================================================
   // QUICK ACTION
   // =================================================================
@@ -1554,33 +1570,26 @@ class _HomeTab extends StatelessWidget {
       child: InkWell(
         onTap:
             onTap,
-
         borderRadius:
             BorderRadius.circular(12),
-
         child:
             Container(
           height: 90,
-
           decoration:
               BoxDecoration(
             color:
                 AppColors.white,
-
             borderRadius:
                 BorderRadius.circular(12),
-
             border:
                 Border.all(
               color:
                   AppColors.primary300,
             ),
           ),
-
           child: Column(
             mainAxisAlignment:
                 MainAxisAlignment.center,
-
             children: [
               Icon(
                 icon,
@@ -1594,10 +1603,8 @@ class _HomeTab extends StatelessWidget {
 
               Text(
                 label,
-
                 textAlign:
                     TextAlign.center,
-
                 style:
                     const TextStyle(
                   fontSize: 11,

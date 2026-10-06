@@ -1,297 +1,149 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
-class QueueNotification {
+class HealthQNotification {
   final String title;
   final String body;
-  final DateTime time;
-  final bool important;
+  final String time;
 
-  const QueueNotification({
+  const HealthQNotification({
     required this.title,
     required this.body,
     required this.time,
-    this.important = false,
   });
 }
 
-class QueueFlowController extends ChangeNotifier {
+class QueueFlowController {
   QueueFlowController._();
 
-  static final QueueFlowController instance = QueueFlowController._();
+  static final QueueFlowController instance =
+      QueueFlowController._();
 
-  // ------------------------------------------------------------
-  // QUEUE SETTINGS
-  // ------------------------------------------------------------
+  final ValueNotifier<int> updateNotifier = ValueNotifier<int>(0);
+
+  final List<HealthQNotification> notifications = [];
 
   int yourQueueNumber = 9;
-
-  int currentQueueNumber = 9;
-
-  int patientsAhead = 8;
-
+  int currentQueueNumber = 7;
   int averageMinutesPerPatient = 2;
 
-  int initialWaitingMinutes = 12;
+  int estimatedWaitMinutes = 25;
+  int patientsAhead = 8;
 
-  int remainingWaitingSeconds = 12 * 60;
+  String doctorName = 'Dr. R. Fernando';
+  String roomNumber = 'Room 03';
 
-  // ------------------------------------------------------------
-  // FLOW STATE
-  // ------------------------------------------------------------
+  bool appointmentCompleted = false;
+  bool queueActive = true;
 
-  bool isWaiting = true;
-  bool isMyTurn = false;
-  bool isMissedTurn = false;
-  bool isCompleted = false;
-  bool isOnMyWay = false;
+  int _nextGeneratedQueueNumber = 19;
 
-  // ------------------------------------------------------------
-  // NOTIFICATIONS
-  // ------------------------------------------------------------
-
-  final List<QueueNotification> notifications = [];
-
-  Timer? _waitingTimer;
-  Timer? _turnTimer;
-
-  bool _started = false;
-
-  List<QueueNotification> get latestNotifications =>
-      List.unmodifiable(notifications);
-
-  int get remainingMinutes =>
-      (remainingWaitingSeconds / 60).ceil();
-
-  double get waitingProgress {
-    if (initialWaitingMinutes <= 0) {
-      return 0;
-    }
-
-    final totalSeconds = initialWaitingMinutes * 60;
-
-    return (remainingWaitingSeconds / totalSeconds)
-        .clamp(0.0, 1.0);
+  void _notify() {
+    updateNotifier.value++;
   }
 
-  // ------------------------------------------------------------
-  // START QUEUE FLOW
-  // ------------------------------------------------------------
+  String _formatTime() {
+    final now = DateTime.now();
 
-  void startQueueFlow() {
-    if (_started) {
-      return;
-    }
+    final hour = now.hour > 12
+        ? now.hour - 12
+        : now.hour == 0
+            ? 12
+            : now.hour;
 
-    _started = true;
+    final minute = now.minute.toString().padLeft(2, '0');
 
-    isWaiting = true;
-    isMyTurn = false;
-    isMissedTurn = false;
-    isCompleted = false;
-    isOnMyWay = false;
+    final period = now.hour >= 12 ? 'PM' : 'AM';
 
-    remainingWaitingSeconds =
-        initialWaitingMinutes * 60;
-
-    _startWaitingTimer();
-
-    notifyListeners();
+    return '$hour:$minute $period';
   }
-
-  void _startWaitingTimer() {
-    _waitingTimer?.cancel();
-
-    _waitingTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) {
-        if (!isWaiting) {
-          return;
-        }
-
-        if (remainingWaitingSeconds > 0) {
-          remainingWaitingSeconds--;
-
-          notifyListeners();
-        }
-
-        if (remainingWaitingSeconds <= 0) {
-          _waitingTimer?.cancel();
-          showMyTurn();
-        }
-      },
-    );
-  }
-
-  // ------------------------------------------------------------
-  // MY TURN
-  // ------------------------------------------------------------
-
-  void showMyTurn() {
-    if (isMyTurn || isCompleted || isMissedTurn) {
-      return;
-    }
-
-    _waitingTimer?.cancel();
-
-    isWaiting = false;
-    isMyTurn = true;
-    isMissedTurn = false;
-    isCompleted = false;
-    isOnMyWay = false;
-
-    addNotification(
-      title: 'It’s Your Turn',
-      body: 'Please proceed to Room 03 for your consultation.',
-      important: true,
-    );
-
-    _startFiveMinuteTurnTimer();
-
-    notifyListeners();
-  }
-
-  void _startFiveMinuteTurnTimer() {
-    _turnTimer?.cancel();
-
-    _turnTimer = Timer(
-      const Duration(minutes: 5),
-      () {
-        if (isMyTurn && !isOnMyWay && !isCompleted) {
-          missedTurn();
-        }
-      },
-    );
-  }
-
-  // ------------------------------------------------------------
-  // ON MY WAY
-  // ------------------------------------------------------------
-
-  void onMyWay() {
-    if (!isMyTurn) {
-      return;
-    }
-
-    _turnTimer?.cancel();
-
-    isMyTurn = false;
-    isWaiting = false;
-    isOnMyWay = true;
-    isCompleted = true;
-    isMissedTurn = false;
-
-    addNotification(
-      title: 'Appointment Completed',
-      body:
-          'Your appointment has been completed successfully.',
-      important: true,
-    );
-
-    notifyListeners();
-  }
-
-  // ------------------------------------------------------------
-  // NEED MORE TIME
-  // ------------------------------------------------------------
-
-  void needMoreTime() {
-    if (!isMyTurn) {
-      return;
-    }
-
-    _turnTimer?.cancel();
-
-    missedTurn();
-
-    notifyListeners();
-  }
-
-  // ------------------------------------------------------------
-  // MISSED TURN
-  // ------------------------------------------------------------
-
-  void missedTurn() {
-    _waitingTimer?.cancel();
-    _turnTimer?.cancel();
-
-    isWaiting = false;
-    isMyTurn = false;
-    isMissedTurn = true;
-    isCompleted = false;
-    isOnMyWay = false;
-
-    addNotification(
-      title: 'Missed My Turn',
-      body:
-          'You did not respond within 5 minutes. Your queue turn has been marked as missed.',
-      important: true,
-    );
-
-    notifyListeners();
-  }
-
-  // ------------------------------------------------------------
-  // NOTIFICATION
-  // ------------------------------------------------------------
 
   void addNotification({
     required String title,
     required String body,
-    bool important = false,
   }) {
     notifications.insert(
       0,
-      QueueNotification(
+      HealthQNotification(
         title: title,
         body: body,
-        time: DateTime.now(),
-        important: important,
+        time: _formatTime(),
       ),
     );
 
-    notifyListeners();
+    _notify();
   }
 
-  // ------------------------------------------------------------
-  // RESET
-  // ------------------------------------------------------------
+  void completeAppointment() {
+    appointmentCompleted = true;
+    queueActive = false;
 
-  void reset() {
-    _waitingTimer?.cancel();
-    _turnTimer?.cancel();
+    addNotification(
+      title: 'Appointment Completed',
+      body:
+          'You are on your way to the consultation. Your queue appointment has been completed.',
+    );
+  }
 
-    _waitingTimer = null;
-    _turnTimer = null;
+  void missedTurn() {
+    queueActive = false;
 
-    _started = false;
+    addNotification(
+      title: 'Missed My Turn',
+      body:
+          'You did not respond within 5 minutes. Your queue position has been changed.',
+    );
+  }
+
+  int generateNewQueuePosition() {
+    final newPosition = _nextGeneratedQueueNumber;
+
+    _nextGeneratedQueueNumber++;
+
+    yourQueueNumber = newPosition;
+
+    currentQueueNumber = newPosition - 2;
+
+    patientsAhead = 10;
+
+    estimatedWaitMinutes =
+        patientsAhead * averageMinutesPerPatient;
+
+    queueActive = true;
+    appointmentCompleted = false;
+
+    _notify();
+
+    return newPosition;
+  }
+
+  void updateQueueDetails({
+    required int queueNumber,
+    required int currentNumber,
+    required int waitMinutes,
+    required int ahead,
+  }) {
+    yourQueueNumber = queueNumber;
+    currentQueueNumber = currentNumber;
+    estimatedWaitMinutes = waitMinutes;
+    patientsAhead = ahead;
+
+    queueActive = true;
+
+    _notify();
+  }
+
+  void clear() {
+    notifications.clear();
 
     yourQueueNumber = 9;
-    currentQueueNumber = 9;
+    currentQueueNumber = 7;
+    averageMinutesPerPatient = 2;
+    estimatedWaitMinutes = 25;
     patientsAhead = 8;
 
-    averageMinutesPerPatient = 2;
+    appointmentCompleted = false;
+    queueActive = true;
 
-    initialWaitingMinutes = 12;
-
-    remainingWaitingSeconds =
-        initialWaitingMinutes * 60;
-
-    isWaiting = true;
-    isMyTurn = false;
-    isMissedTurn = false;
-    isCompleted = false;
-    isOnMyWay = false;
-
-    notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    _waitingTimer?.cancel();
-    _turnTimer?.cancel();
-
-    super.dispose();
+    _notify();
   }
 }
