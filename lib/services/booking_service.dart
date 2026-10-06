@@ -187,6 +187,11 @@ class BookingService {
     final nRef = _db.collection('notifications').doc();
     final uRef = _db.collection('users').doc(user.uid);
 
+    // Same format as the register screen: DD/MM/YYYY
+    final dobDisplay = dob.length == 10 && dob.contains('-')
+        ? '${dob.substring(8, 10)}/${dob.substring(5, 7)}/${dob.substring(0, 4)}'
+        : dob;
+
     return _db.runTransaction<int>((tx) async {
       final h = await tx.get(hRef);
       if (h.data()?['status'] == 'full') {
@@ -237,8 +242,8 @@ class BookingService {
       final fill = <String, dynamic>{
         if ((um['fullName'] ?? '') == '') 'fullName': patientName,
         if ((um['nic'] ?? '') == '') 'nic': nic,
-        if ((um['dob'] ?? '') == '') 'dob': dob,
-        if ((um['contact'] ?? '') == '') 'contact': contact,
+        if ((um['dob'] ?? '') == '') 'dob': dobDisplay,
+        if ((um['contactNo'] ?? um['contact'] ?? '') == '') 'contactNo': contact,
         if ((um['email'] ?? '') == '' && user.email != null) 'email': user.email,
       };
       if (fill.isNotEmpty) tx.set(uRef, fill, SetOptions(merge: true));
@@ -269,7 +274,7 @@ class BookingService {
         fullName: m['fullName'] ?? user.displayName ?? '',
         nic: m['nic'] ?? '',
         dob: m['dob'] ?? '',
-        contact: m['contact'] ?? user.phoneNumber ?? '',
+        contact: m['contactNo'] ?? m['contact'] ?? user.phoneNumber ?? '',
         email: user.email ?? m['email'] ?? '',
       );
     });

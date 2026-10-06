@@ -266,10 +266,15 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [_hospitals(), _details(), _patient(), _confirm(), _history()];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      child: pages[_step],
+      child: switch (_step) {
+        0 => _hospitals(),
+        1 => _details(),
+        2 => _patient(),
+        3 => _confirm(),
+        _ => _history(),
+      },
     );
   }
 
