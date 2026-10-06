@@ -46,20 +46,21 @@ class CheckInScreen extends StatefulWidget {
     this.bookedAppointment,
     this.lookupAppointment,
     this.onCheckIn,
-    this.onNavigationSelected,
+    this.onBackToHome,
   });
 
-  // Pass this from the appointment booking screen.
   final CheckInAppointment? bookedAppointment;
 
   // Optional backend lookup, connected later.
   final CheckInAppointmentLookup? lookupAppointment;
 
   // Receives the matched appointment.
-  // Backend check-in / navigation can be connected here.
+  // Backend check-in / queue synchronization can be connected here.
   final ValueChanged<CheckInAppointment>? onCheckIn;
 
-  final ValueChanged<int>? onNavigationSelected;
+  // Check-in is displayed inside HomeScreen's IndexedStack.
+  // Therefore this callback is used to return directly to Home.
+  final VoidCallback? onBackToHome;
 
   @override
   State<CheckInScreen> createState() => _CheckInScreenState();
@@ -73,7 +74,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
   static const _border = Color(0xFFD6E5E5);
   static const _error = Color(0xFFB3261E);
 
-  // Must match your actual image filename and extension.
   static const _hospitalImage =
       'lib/assets/images/check_in_hospital.jpg';
 
@@ -166,7 +166,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
       _loading = false;
       _lookupError = null;
 
-      // Fill the card only when valid input matches the supplied booking.
       _appointment = _validateNic(_nic) == null &&
               booking != null &&
               _matches(booking)
@@ -248,7 +247,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       _loading = false;
     });
 
-    // Send the matched appointment back to the parent screen/backend.
+    // Send the matched appointment back to HomeScreen/backend.
     widget.onCheckIn?.call(matchedAppointment);
 
     if (!mounted) return;
@@ -256,8 +255,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
     // -------------------------------------------------------------
     // QUEUE STATUS
     // -------------------------------------------------------------
-    // QueueStatusScreen currently does not accept an "appointment"
-    // parameter. Therefore we open it using its existing constructor.
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const QueueStatusScreen(),
@@ -265,31 +262,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: _dark,
-        ),
-      );
-  }
-
-  void _selectNavigation(int index) {
-    if (widget.onNavigationSelected != null) {
-      widget.onNavigationSelected!(index);
-    } else if (index != 0) {
-      const labels = [
-        'Home',
-        'Appointments',
-        'Queue',
-        'Alerts',
-      ];
-
-      _showMessage(
-        '${labels[index]} screen is not connected yet.',
-      );
+  void _goBackToHome() {
+    if (widget.onBackToHome != null) {
+      widget.onBackToHome!();
+    } else if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
     }
   }
 
@@ -370,31 +347,59 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(
                   16,
-                  12,
+                  8,
                   16,
                   28,
                 ),
                 child: Form(
                   key: _formKey,
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Check In',
-                        style: TextStyle(
-                          color: _dark,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                        ),
+                      // -------------------------------------------------
+                      // HEADER + BACK BUTTON
+                      // -------------------------------------------------
+
+                      Row(
+                        children: [
+                          Material(
+                            color: Colors.white,
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              onTap: _goBackToHome,
+                              customBorder: const CircleBorder(),
+                              child: const SizedBox(
+                                width: 42,
+                                height: 42,
+                                child: Icon(
+                                  Icons.arrow_back_ios_new,
+                                  color: _dark,
+                                  size: 19,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Check In',
+                            style: TextStyle(
+                              color: _dark,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
+
+                      const SizedBox(height: 14),
+
                       _buildBanner(),
+
                       const SizedBox(height: 28),
+
                       Padding(
-                        padding:
-                            const EdgeInsets.symmetric(
+                        padding: const EdgeInsets.symmetric(
                           horizontal: 8,
                         ),
                         child: Column(
@@ -403,12 +408,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                               controller: _nicController,
                               validator: _validateNic,
                               autovalidateMode:
-                                  AutovalidateMode
-                                      .onUserInteraction,
-                              onChanged: (_) =>
-                                  _inputChanged(),
-                              textInputAction:
-                                  TextInputAction.next,
+                                  AutovalidateMode.onUserInteraction,
+                              onChanged: (_) => _inputChanged(),
+                              textInputAction: TextInputAction.next,
                               textCapitalization:
                                   TextCapitalization.characters,
                               autocorrect: false,
@@ -430,8 +432,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                         text: ' *',
                                         style: TextStyle(
                                           color: _error,
-                                          fontWeight:
-                                              FontWeight.w700,
+                                          fontWeight: FontWeight.w700,
                                         ),
                                       ),
                                     ],
@@ -439,16 +440,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                 ),
                               ),
                             ),
+
                             const SizedBox(height: 12),
+
                             TextFormField(
-                              controller:
-                                  _appointmentController,
-                              onChanged: (_) =>
-                                  _inputChanged(),
-                              textInputAction:
-                                  TextInputAction.done,
-                              onFieldSubmitted: (_) =>
-                                  _checkIn(),
+                              controller: _appointmentController,
+                              onChanged: (_) => _inputChanged(),
+                              textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) => _checkIn(),
                               textCapitalization:
                                   TextCapitalization.characters,
                               autocorrect: false,
@@ -461,35 +460,31 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                 hint: 'Appointment ID',
                               ),
                             ),
+
                             const SizedBox(height: 14),
+
                             SizedBox(
                               width: double.infinity,
                               height: 48,
                               child: ElevatedButton(
-                                onPressed:
-                                    _loading ? null : _checkIn,
+                                onPressed: _loading ? null : _checkIn,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: _primary,
                                   foregroundColor: Colors.white,
-                                  disabledBackgroundColor:
-                                      _primary,
-                                  disabledForegroundColor:
-                                      Colors.white,
+                                  disabledBackgroundColor: _primary,
+                                  disabledForegroundColor: Colors.white,
                                   elevation: 0,
-                                  shape:
-                                      const StadiumBorder(),
+                                  shape: const StadiumBorder(),
                                   textStyle: const TextStyle(
                                     fontSize: 16,
-                                    fontWeight:
-                                        FontWeight.w700,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                                 child: _loading
                                     ? const SizedBox(
                                         width: 20,
                                         height: 20,
-                                        child:
-                                            CircularProgressIndicator(
+                                        child: CircularProgressIndicator(
                                           strokeWidth: 2,
                                           color: Colors.white,
                                         ),
@@ -497,10 +492,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                     : const Text('Check In'),
                               ),
                             ),
+
                             if (_lookupError != null)
                               Padding(
-                                padding:
-                                    const EdgeInsets.only(
+                                padding: const EdgeInsets.only(
                                   top: 8,
                                 ),
                                 child: Text(
@@ -511,7 +506,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                   ),
                                 ),
                               ),
+
                             const SizedBox(height: 18),
+
                             _buildDetailsCard(),
                           ],
                         ),
@@ -523,8 +520,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
             ),
           ),
         ),
-        bottomNavigationBar:
-            _buildBottomNavigation(),
       ),
     );
   }
@@ -664,8 +659,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
             return Padding(
               padding: EdgeInsets.only(
-                bottom:
-                    index == rows.length - 1 ? 0 : 8,
+                bottom: index == rows.length - 1 ? 0 : 8,
               ),
               child: Row(
                 crossAxisAlignment:
@@ -689,10 +683,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       row.value,
                       textAlign: TextAlign.right,
                       style: TextStyle(
-                        color:
-                            row.key == 'Est. Queue No.'
-                                ? _primary
-                                : _dark,
+                        color: row.key == 'Est. Queue No.'
+                            ? _primary
+                            : _dark,
                         fontSize: 13,
                         height: 1.25,
                         fontWeight: FontWeight.w700,
@@ -703,95 +696,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
               ),
             );
           },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomNavigation() {
-    const labels = [
-      'Home',
-      'Appointments',
-      'Queue',
-      'Alerts',
-    ];
-
-    const icons = [
-      Icons.home_outlined,
-      Icons.calendar_today_outlined,
-      Icons.format_list_bulleted,
-      Icons.notifications_none,
-    ];
-
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(
-            color: _border,
-            width: 0.5,
-          ),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Align(
-          heightFactor: 1,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 480,
-            ),
-            child: Row(
-              children: List.generate(
-                labels.length,
-                (index) {
-                  final color =
-                      index == 0 ? _primary : _muted;
-
-                  return Expanded(
-                    child: Semantics(
-                      selected: index == 0,
-                      child: InkWell(
-                        onTap: () =>
-                            _selectNavigation(index),
-                        child: Padding(
-                          padding:
-                              const EdgeInsets.symmetric(
-                            vertical: 12,
-                            horizontal: 2,
-                          ),
-                          child: Column(
-                            mainAxisSize:
-                                MainAxisSize.min,
-                            children: [
-                              Icon(
-                                icons[index],
-                                color: color,
-                                size: 21,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                labels[index],
-                                textAlign:
-                                    TextAlign.center,
-                                style: TextStyle(
-                                  color: color,
-                                  fontSize: 10,
-                                  fontWeight: index == 0
-                                      ? FontWeight.w700
-                                      : FontWeight.w400,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
         ),
       ),
     );

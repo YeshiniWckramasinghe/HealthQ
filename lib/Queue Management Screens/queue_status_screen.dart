@@ -230,7 +230,10 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(height: compact ? 8 : 12),
+
+        // BACK BUTTON + TITLE
         _buildTitle(compact),
+
         SizedBox(height: compact ? 12 : 16),
         _buildCurrentlyServingCard(compact),
         SizedBox(height: compact ? 32 : 42),
@@ -249,15 +252,43 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
     );
   }
 
+  // ==========================================================================
+  // TITLE + BACK BUTTON
+  // ==========================================================================
+
   Widget _buildTitle(bool compact) {
-    return Text(
-      'Queue Status',
-      style: TextStyle(
-        fontSize: compact ? 22 : 25,
-        fontWeight: FontWeight.w800,
-        color: const Color(0xFF063E3E),
-        letterSpacing: -0.5,
-      ),
+    return Row(
+      children: [
+        Material(
+          color: Colors.white,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () {
+              Navigator.of(context).pop();
+            },
+            child: SizedBox(
+              width: compact ? 40 : 42,
+              height: compact ? 40 : 42,
+              child: const Icon(
+                Icons.arrow_back_rounded,
+                color: Color(0xFF063E3E),
+                size: 22,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          'Queue Status',
+          style: TextStyle(
+            fontSize: compact ? 22 : 25,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF063E3E),
+            letterSpacing: -0.5,
+          ),
+        ),
+      ],
     );
   }
 
@@ -419,13 +450,13 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
         itemBuilder: (context, index) {
           final patient = widget.patients[index];
 
-          final number = int.tryParse(patient.queueNumber);
-
-          final isYourNumber = number == _yourQueueNumber;
+          // Highlight ONLY the currently serving queue number.
+          final isCurrentlyServing =
+              patient.queueNumber == _currentlyServing.queueNumber;
 
           return _buildQueueNumberBox(
             patient.queueNumber,
-            isYourNumber,
+            isCurrentlyServing,
             compact,
           );
         },
@@ -2239,9 +2270,7 @@ class _NewQueueStatusScreenState
               fontWeight: FontWeight.w700,
             ),
           ),
-
           const SizedBox(height: 10),
-
           Row(
             children: [
               Container(
@@ -2263,9 +2292,7 @@ class _NewQueueStatusScreenState
                   ),
                 ),
               ),
-
               const SizedBox(width: 9),
-
               Expanded(
                 child: Text(
                   serving.patientName,
@@ -2278,7 +2305,6 @@ class _NewQueueStatusScreenState
                   ),
                 ),
               ),
-
               const Text(
                 'In Consult',
                 style: TextStyle(

@@ -462,6 +462,12 @@ class _HomeScreenState extends State<HomeScreen> {
             CheckInScreen(
               bookedAppointment:
                   _currentAppointment,
+
+              // -----------------------------------------------------
+              // Back button on Check-In screen returns to Home.
+              // -----------------------------------------------------
+              onBackToHome: _goToHome,
+
               onCheckIn: (appointment) {
                 setState(() {
                   _currentAppointment =
