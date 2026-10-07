@@ -215,7 +215,7 @@ class _StaffForgotPasswordScreenState extends State<StaffForgotPasswordScreen> {
                     return null;
                   },
                   decoration: InputDecoration(
-                    hintText: 'e.g. DOC1001-0001 or NUR1002-0011',
+                    hintText: 'e.g. DOC-1001, NUR-2001 or staff@hospital.lk',
                     hintStyle: const TextStyle(color: AppColors.gray400, fontSize: 13),
                     prefixIcon: const Icon(Icons.badge_outlined, color: primaryTeal, size: 20),
                     filled: true,

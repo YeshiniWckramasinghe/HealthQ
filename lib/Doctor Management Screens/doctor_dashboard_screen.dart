@@ -9,9 +9,9 @@ class DoctorDashboardScreen extends StatefulWidget {
 
   const DoctorDashboardScreen({
     super.key,
-    this.doctorName = 'Dr. S. Perera',
-    this.staffId = 'DOC1001-0001',
-    this.hospital = 'Government Hospital — Colombo',
+    this.doctorName = 'Doctor',
+    this.staffId,
+    this.hospital,
   });
 
   @override
