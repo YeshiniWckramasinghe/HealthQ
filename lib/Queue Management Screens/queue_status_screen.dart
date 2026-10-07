@@ -64,6 +64,28 @@ class QueueNotificationCenter {
 }
 
 // ============================================================================
+// BOTTOM NAVIGATION BRIDGE
+// ============================================================================
+// The queue screens are pushed on top of HomeScreen, so their bottom bar must
+// go back to HomeScreen and ask it to select the tapped tab.
+// HomeScreen listens to [requestedTab] (see instructions).
+//
+// Tab indexes: 0 = Home, 1 = Appointments, 2 = Queue, 3 = Alerts
+
+class QueueNavigationCenter {
+  static final ValueNotifier<int?> requestedTab = ValueNotifier<int?>(null);
+
+  static void goToTab(BuildContext context, int index) {
+    // Back to HomeScreen (first route).
+    Navigator.of(context).popUntil((route) => route.isFirst);
+
+    // Reset first so tapping the same tab twice still notifies listeners.
+    requestedTab.value = null;
+    requestedTab.value = index;
+  }
+}
+
+// ============================================================================
 // QUEUE STATUS SCREEN
 // ============================================================================
 
@@ -122,7 +144,7 @@ class QueueStatusScreen extends StatefulWidget {
 }
 
 class _QueueStatusScreenState extends State<QueueStatusScreen> {
-  int _selectedBottomIndex = 2;
+  final int _selectedBottomIndex = 2;
 
   int get _yourQueueNumber => widget.yourQueueNumber;
 
@@ -446,7 +468,7 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         itemCount: widget.patients.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 13),
+        separatorBuilder: (_, _) => const SizedBox(width: 13),
         itemBuilder: (context, index) {
           final patient = widget.patients[index];
 
@@ -685,9 +707,8 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
     return Expanded(
       child: InkWell(
         onTap: () {
-          setState(() {
-            _selectedBottomIndex = index;
-          });
+          // Already on the Queue screen.
+          if (index == 2) return;
 
           _handleNavigation(index);
         },
@@ -724,6 +745,8 @@ class _QueueStatusScreenState extends State<QueueStatusScreen> {
 
   void _handleNavigation(int index) {
     if (index == 2) return;
+
+    QueueNavigationCenter.goToTab(context, index);
   }
 }
 
@@ -757,7 +780,7 @@ class _EstimatedWaitingTimeScreenState
   late int _initialSeconds;
   late int _remainingSeconds;
 
-  int _selectedBottomIndex = 2;
+  final int _selectedBottomIndex = 2;
 
   @override
   void initState() {
@@ -810,12 +833,6 @@ class _EstimatedWaitingTimeScreenState
 
   int get _displayMinutes {
     return math.max(0, _remainingMinutes);
-  }
-
-  String get _yourQueueText {
-    return widget.yourQueueNumber
-        .toString()
-        .padLeft(2, '0');
   }
 
   double get _progress {
@@ -998,7 +1015,7 @@ class _EstimatedWaitingTimeScreenState
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         itemCount: widget.patients.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final patient = widget.patients[index];
@@ -1186,9 +1203,7 @@ class _EstimatedWaitingTimeScreenState
     return Expanded(
       child: InkWell(
         onTap: () {
-          setState(() {
-            _selectedBottomIndex = index;
-          });
+          QueueNavigationCenter.goToTab(context, index);
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1243,7 +1258,7 @@ class _MyTurnScreenState extends State<MyTurnScreen> {
 
   int _remainingSeconds = 5 * 60;
 
-  int _selectedBottomIndex = 0;
+  final int _selectedBottomIndex = 0;
 
   bool _handled = false;
 
@@ -1596,9 +1611,7 @@ class _MyTurnScreenState extends State<MyTurnScreen> {
     return Expanded(
       child: InkWell(
         onTap: () {
-          setState(() {
-            _selectedBottomIndex = index;
-          });
+          QueueNavigationCenter.goToTab(context, index);
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1651,7 +1664,7 @@ class MissedMyTurnScreen extends StatefulWidget {
 
 class _MissedMyTurnScreenState
     extends State<MissedMyTurnScreen> {
-  int _selectedBottomIndex = 0;
+  final int _selectedBottomIndex = 0;
 
   int get _newQueueNumber {
     if (widget.patients.isEmpty) {
@@ -1957,9 +1970,7 @@ class _MissedMyTurnScreenState
     return Expanded(
       child: InkWell(
         onTap: () {
-          setState(() {
-            _selectedBottomIndex = index;
-          });
+          QueueNavigationCenter.goToTab(context, index);
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2016,7 +2027,7 @@ class NewQueueStatusScreen extends StatefulWidget {
 
 class _NewQueueStatusScreenState
     extends State<NewQueueStatusScreen> {
-  int _selectedBottomIndex = 2;
+  final int _selectedBottomIndex = 2;
 
   int get _patientsAhead {
     return widget.patients.where((patient) {
@@ -2330,7 +2341,7 @@ class _NewQueueStatusScreenState
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         itemCount: widget.patients.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final patient = widget.patients[index];
@@ -2427,9 +2438,10 @@ class _NewQueueStatusScreenState
     return Expanded(
       child: InkWell(
         onTap: () {
-          setState(() {
-            _selectedBottomIndex = index;
-          });
+          // Already on the Queue screen.
+          if (index == 2) return;
+
+          QueueNavigationCenter.goToTab(context, index);
         },
         child: Column(
           mainAxisAlignment:

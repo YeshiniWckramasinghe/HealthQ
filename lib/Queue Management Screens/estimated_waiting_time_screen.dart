@@ -5,18 +5,20 @@ import 'package:flutter/material.dart';
 
 import 'my_turn_screen.dart';
 import 'queue_status_screen.dart';
+import '../Patient Management Screens/home_screen.dart';
+import '../Patient Management Screens/appointments_tab.dart';
 
 class EstimatedWaitingTimeScreen extends StatefulWidget {
+  final int yourQueueNumber;
+  final int averageMinutesPerPatient;
+  final List<int> patients;
+
   const EstimatedWaitingTimeScreen({
     super.key,
     required this.yourQueueNumber,
     required this.averageMinutesPerPatient,
     required this.patients,
   });
-
-  final int yourQueueNumber;
-  final int averageMinutesPerPatient;
-  final List<QueuePatient> patients;
 
   @override
   State<EstimatedWaitingTimeScreen> createState() =>
@@ -27,64 +29,22 @@ class _EstimatedWaitingTimeScreenState
     extends State<EstimatedWaitingTimeScreen> {
   Timer? _timer;
 
-  late int _remainingSeconds;
+  int _remainingSeconds = 0;
+  int _estimatedMinutes = 0;
+  int _patientsAhead = 0;
 
-  late int _estimatedMinutes;
+  int _initialMinutes = 0;
+  int _remainingMinutes = 0;
 
-  int get _patientsAhead {
-    int count = 0;
+  double _progress = 1.0;
 
-    for (final patient in widget.patients) {
-      final number = int.tryParse(patient.queueNumber);
-
-      if (number != null &&
-          number < widget.yourQueueNumber &&
-          patient.status.toLowerCase() != 'completed') {
-        count++;
-      }
-    }
-
-    return count;
-  }
-
-  int get _initialMinutes {
-    if (_patientsAhead == 0) {
-      return 2;
-    }
-
-    return math.max(
-      12,
-      _patientsAhead * widget.averageMinutesPerPatient,
-    );
-  }
+  String _queueText = '';
 
   @override
   void initState() {
     super.initState();
-
-    _estimatedMinutes = _initialMinutes;
-
-    _remainingSeconds = _estimatedMinutes * 60;
-
+    _calculateWaitingTime();
     _startTimer();
-  }
-
-  void _startTimer() {
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) {
-        if (!mounted) return;
-
-        if (_remainingSeconds <= 0) {
-          _timer?.cancel();
-          return;
-        }
-
-        setState(() {
-          _remainingSeconds--;
-        });
-      },
-    );
   }
 
   @override
@@ -93,22 +53,71 @@ class _EstimatedWaitingTimeScreenState
     super.dispose();
   }
 
-  int get _remainingMinutes {
-    return (_remainingSeconds / 60).ceil();
+  void _calculateWaitingTime() {
+    _patientsAhead = widget.patients
+        .where((number) => number < widget.yourQueueNumber)
+        .length;
+
+    _estimatedMinutes =
+        _patientsAhead * widget.averageMinutesPerPatient;
+
+    _initialMinutes = _estimatedMinutes;
+    _remainingMinutes = _estimatedMinutes;
+
+    _remainingSeconds = _estimatedMinutes * 60;
+
+    _progress = _initialMinutes > 0 ? 1.0 : 0.0;
+
+    if (_patientsAhead > 0) {
+      _queueText =
+          'There are $_patientsAhead patients ahead of you.';
+    } else {
+      _queueText = 'You are next in the queue.';
+    }
   }
 
-  double get _progress {
-    if (_estimatedMinutes <= 0) return 0;
+  void _startTimer() {
+    if (_remainingSeconds <= 0) return;
 
-    return (_remainingSeconds /
-            (_estimatedMinutes * 60))
-        .clamp(0.0, 1.0);
+    _timer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_remainingSeconds <= 0) {
+          timer.cancel();
+          return;
+        }
+
+        setState(() {
+          _remainingSeconds--;
+
+          _remainingMinutes =
+              (_remainingSeconds / 60).ceil();
+
+          if (_initialMinutes > 0) {
+            _progress =
+                _remainingSeconds /
+                    (_initialMinutes * 60);
+
+            _progress = _progress.clamp(0.0, 1.0);
+          } else {
+            _progress = 0.0;
+          }
+        });
+      },
+    );
   }
 
-  String get _queueText {
-    return widget.yourQueueNumber
-        .toString()
-        .padLeft(2, '0');
+  String _formatTime(int seconds) {
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -124,7 +133,10 @@ class _EstimatedWaitingTimeScreenState
                 ? 14.0
                 : width < 600
                     ? 24.0
-                    : math.min(width * 0.08, 70.0);
+                    : math.min(
+                        width * 0.08,
+                        70.0,
+                      );
 
             final contentWidth = math.min(
               width - (horizontalPadding * 2),
@@ -152,7 +164,10 @@ class _EstimatedWaitingTimeScreenState
                         ),
                       ),
                     ),
-                    _buildBottomNavigation(width),
+                    _buildBottomNavigation(
+                      context,
+                      width,
+                    ),
                   ],
                 ),
               ),
@@ -167,278 +182,364 @@ class _EstimatedWaitingTimeScreenState
     final compact = width < 380;
 
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(height: compact ? 8 : 12),
+        // -------------------------------------------------------------
+        // HEADER + BACK BUTTON
+        // Same style as Check In screen
+        // -------------------------------------------------------------
+        Row(
+          children: [
+            Material(
+              color: Colors.white,
+              shape: const CircleBorder(),
+              child: InkWell(
+                onTap: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const QueueStatusScreen(),
+                    ),
+                  );
+                },
+                customBorder: const CircleBorder(),
+                child: const SizedBox(
+                  width: 42,
+                  height: 42,
+                  child: Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Color(0xFF063A37),
+                    size: 19,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Estimated Waiting Time',
+              style: TextStyle(
+                fontSize: compact ? 22 : 25,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF063E3E),
+                letterSpacing: -0.5,
+              ),
+            ),
+          ],
+        ),
 
-        Text(
-          'Estimated Waiting Time',
+        const SizedBox(height: 22),
+
+        // WAITING TIME CIRCLE
+        Center(
+          child: SizedBox(
+            width: compact ? 190 : 220,
+            height: compact ? 190 : 220,
+            child: CustomPaint(
+              painter: _WaitingTimePainter(
+                progress: _progress,
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _formatTime(_remainingSeconds),
+                      style: TextStyle(
+                        fontSize: compact ? 34 : 40,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF063E3E),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      'Estimated Wait',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF6D8585),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        // AVERAGE TIME
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 15,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 10,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5F4F1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.access_time,
+                  color: Color(0xFF0A7771),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Average Time Per Patient',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF718585),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${widget.averageMinutesPerPatient} minutes',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF063E3E),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 22),
+
+        // CURRENT QUEUE
+        const Text(
+          'Current Queue',
           style: TextStyle(
-            fontSize: compact ? 22 : 25,
+            fontSize: 18,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF063E3E),
-            letterSpacing: -0.5,
+            color: Color(0xFF063E3E),
           ),
         ),
 
-        SizedBox(height: compact ? 70 : 90),
+        const SizedBox(height: 12),
 
-        _buildTimerCircle(compact),
+        SizedBox(
+          height: 52,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics:
+                const BouncingScrollPhysics(),
+            itemCount: widget.patients.length,
+            separatorBuilder: (_, __) =>
+                const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final number = widget.patients[index];
+              final isYourNumber =
+                  number == widget.yourQueueNumber;
 
-        SizedBox(height: compact ? 12 : 14),
+              return Container(
+                width: 52,
+                decoration: BoxDecoration(
+                  color: isYourNumber
+                      ? const Color(0xFF0A7771)
+                      : Colors.white,
+                  borderRadius:
+                      BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isYourNumber
+                        ? const Color(0xFF0A7771)
+                        : const Color(0xFFDCE8E6),
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    '$number',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: isYourNumber
+                          ? Colors.white
+                          : const Color(0xFF063E3E),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
 
-        Center(
-          child: Text(
-            'AVG Time Per Patient',
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              color: const Color(0xFF00827D),
-              fontWeight: FontWeight.w500,
+        const SizedBox(height: 22),
+
+        // QUEUE INFORMATION
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8F5F2),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.info_outline,
+                color: Color(0xFF0A7771),
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _queueText,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: Color(0xFF315858),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        // NEXT BUTTON
+        SizedBox(
+          height: 52,
+          child: ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      MyTurnScreen(
+                    yourQueueNumber:
+                        widget.yourQueueNumber,
+                  ),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  const Color(0xFF0A7771),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(14),
+              ),
+            ),
+            child: const Text(
+              'Next',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
 
-        Center(
-          child: Text(
-            '${widget.averageMinutesPerPatient} min',
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              color: const Color(0xFF00827D),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-
-        SizedBox(height: compact ? 26 : 30),
-
-        Padding(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 22),
-          child: Text(
-            'Current Queue',
-            style: TextStyle(
-              fontSize: compact ? 13 : 14,
-              fontWeight: FontWeight.w500,
-              color: const Color(0xFF00827D),
-            ),
-          ),
-        ),
-
-        SizedBox(height: compact ? 12 : 14),
-
-        _buildQueueScroller(compact),
-
-        SizedBox(height: compact ? 18 : 20),
-
-        _buildQueueInformation(compact),
-
-        SizedBox(height: compact ? 22 : 30),
-
-        _buildNextButton(compact),
+        const SizedBox(height: 12),
       ],
     );
   }
 
-  Widget _buildTimerCircle(bool compact) {
-    return Center(
-      child: SizedBox(
-        width: compact ? 150 : 160,
-        height: compact ? 150 : 160,
-        child: CustomPaint(
-          painter: _WaitingTimePainter(
-            progress: _progress,
-          ),
-          child: Center(
-            child: Column(
-              mainAxisAlignment:
-                  MainAxisAlignment.center,
-              children: [
-                Text(
-                  '$_remainingMinutes mins',
-                  style: TextStyle(
-                    fontSize: compact ? 24 : 26,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF00827D),
-                  ),
-                ),
-                Text(
-                  'left',
-                  style: TextStyle(
-                    fontSize: compact ? 22 : 24,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF00827D),
-                  ),
-                ),
-              ],
-            ),
-          ),
+  Widget _buildBottomNavigation(
+    BuildContext context,
+    double width,
+  ) {
+    return Container(
+      height: 70,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(22),
         ),
-      ),
-    );
-  }
-
-  Widget _buildQueueScroller(bool compact) {
-    return SizedBox(
-      height: compact ? 58 : 62,
-      child: ListView.separated(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 22),
-        scrollDirection: Axis.horizontal,
-        physics:
-            const BouncingScrollPhysics(),
-        itemCount: widget.patients.length,
-        separatorBuilder: (_, index) =>
-            const SizedBox(width: 13),
-        itemBuilder: (context, index) {
-          final patient = widget.patients[index];
-
-          final number =
-              int.tryParse(patient.queueNumber);
-
-          final isYourNumber =
-              number == widget.yourQueueNumber;
-
-          return Container(
-            width: compact ? 48 : 48,
-            height: compact ? 48 : 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: isYourNumber
-                  ? const Color(0xFF39A49E)
-                  : Colors.white,
-              borderRadius:
-                  BorderRadius.circular(10),
-              border: Border.all(
-                color:
-                    const Color(0xFF00827D),
-                width:
-                    isYourNumber ? 0 : 1.6,
-              ),
-            ),
-            child: Text(
-              patient.queueNumber,
-              style: TextStyle(
-                fontSize: compact ? 18 : 19,
-                fontWeight: isYourNumber
-                    ? FontWeight.w900
-                    : FontWeight.w500,
-                color: isYourNumber
-                    ? Colors.white
-                    : const Color(0xFF063E3E),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildQueueInformation(bool compact) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 22),
-      child: Row(
-        mainAxisAlignment:
-            MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Est. Wait: $_estimatedMinutes mins',
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              color: const Color(0xFF00827D),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          Text(
-            '$_patientsAhead Patient Ahead',
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              color: const Color(0xFF00827D),
-              fontWeight: FontWeight.w500,
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 12,
+            offset: Offset(0, -3),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildNextButton(bool compact) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 8),
-      child: SizedBox(
-        width: double.infinity,
-        height: compact ? 44 : 48,
-        child: ElevatedButton(
-          onPressed: () {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => MyTurnScreen(
-                  yourQueueNumber:
-                      widget.yourQueueNumber,
-                ),
-              ),
-            );
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor:
-                const Color(0xFF00827D),
-            foregroundColor: Colors.white,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius:
-                  BorderRadius.circular(24),
-            ),
-          ),
-          child: Text(
-            'Next',
-            style: TextStyle(
-              fontSize: compact ? 13 : 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomNavigation(double width) {
-    final compact = width < 380;
-
-    return Container(
-      width: double.infinity,
-      height: compact ? 66 : 72,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(
-            color: Color(0xFFE1E9E8),
-          ),
-        ),
-      ),
       child: Row(
+        mainAxisAlignment:
+            MainAxisAlignment.spaceAround,
         children: [
           _navItem(
-            Icons.home_outlined,
-            'Home',
-            compact,
+            context,
+            icon: Icons.home_outlined,
+            label: 'Home',
+            selected: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const HomeScreen(),
+                ),
+              );
+            },
           ),
           _navItem(
-            Icons.calendar_today_outlined,
-            'Appointments',
-            compact,
+            context,
+            icon: Icons.calendar_today_outlined,
+            label: 'Appointments',
+            selected: false,
+            onTap: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const AppointmentsTab(),
+                ),
+              );
+            },
           ),
           _navItem(
-            Icons.format_list_bulleted,
-            'Queue',
-            compact,
+            context,
+            icon: Icons.confirmation_number_outlined,
+            label: 'Queue',
+            selected: true,
+            onTap: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const QueueStatusScreen(),
+                ),
+              );
+            },
           ),
           _navItem(
-            Icons.notifications_none_rounded,
-            'Alerts',
-            compact,
+            context,
+            icon: Icons.notifications_none,
+            label: 'Alerts',
+            selected: false,
+            onTap: () {},
           ),
         ],
       ),
@@ -446,29 +547,41 @@ class _EstimatedWaitingTimeScreenState
   }
 
   Widget _navItem(
-    IconData icon,
-    String label,
-    bool compact,
-  ) {
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final color = selected
+        ? const Color(0xFF0A7771)
+        : const Color(0xFF829292);
+
     return Expanded(
-      child: Column(
-        mainAxisAlignment:
-            MainAxisAlignment.center,
-        children: [
-          Icon(
-            icon,
-            size: compact ? 21 : 23,
-            color: const Color(0xFF789090),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: compact ? 8 : 9,
-              color: const Color(0xFF789090),
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment:
+              MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 23,
+              color: color,
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: selected
+                    ? FontWeight.w700
+                    : FontWeight.w500,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -495,22 +608,22 @@ class _WaitingTimePainter extends CustomPainter {
         math.min(size.width, size.height) / 2 - 8;
 
     final backgroundPaint = Paint()
-      ..color = const Color(0xFFE2ECEA)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-
-    final progressPaint = Paint()
-      ..color = const Color(0xFF00827D)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
+      ..strokeWidth = 12
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFFDCEBE8);
 
     canvas.drawCircle(
       center,
       radius,
       backgroundPaint,
     );
+
+    final progressPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF0A7771);
 
     final sweepAngle =
         2 * math.pi * progress;

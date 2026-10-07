@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'appointments_tab.dart';
 import '../Queue Management Screens/check_in_screen.dart';
+import '../Queue Management Screens/queue_status_screen.dart';
 import '../common Screens/login_screen.dart';
 
 // ===================================================================
@@ -187,6 +188,40 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _fetchUserProfile();
+
+    // Listen for bottom-bar taps coming from the Queue Status screens.
+    QueueNavigationCenter.requestedTab
+        .addListener(_onQueueTabRequested);
+  }
+
+  @override
+  void dispose() {
+    QueueNavigationCenter.requestedTab
+        .removeListener(_onQueueTabRequested);
+    super.dispose();
+  }
+
+  // =================================================================
+  // QUEUE SCREENS -> HOME TAB REQUEST
+  //
+  // Queue screens bottom bar indexes:
+  // 0 = Home, 1 = Appointments, 2 = Queue (Check In), 3 = Alerts
+  //
+  // These match HomeScreen's internal IndexedStack indexes:
+  // 0 = Home, 1 = Appointments, 2 = Check In, 3 = Notifications
+  // =================================================================
+
+  void _onQueueTabRequested() {
+    final requested =
+        QueueNavigationCenter.requestedTab.value;
+
+    if (requested == null || !mounted) return;
+
+    setState(() {
+      _index = requested;
+    });
+
+    QueueNavigationCenter.requestedTab.value = null;
   }
 
   // =================================================================
@@ -479,8 +514,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 // ---------------------------------------------------
 
                 final queueNumber =
-                    appointment.estimatedQueueNumber ??
-                        '#${_nextQueueNumber - 1}';
+                    appointment.estimatedQueueNumber.isNotEmpty
+                        ? appointment.estimatedQueueNumber
+                        : '#${_nextQueueNumber - 1}';
 
                 HealthQQueueCenter.update(
                   queueNumber: queueNumber,
@@ -1286,8 +1322,9 @@ class _HomeTab extends StatelessWidget {
           ) {
             final queueNumber =
                 queueState?.queueNumber ??
-                    appointment.estimatedQueueNumber ??
-                    '#--';
+                    (appointment.estimatedQueueNumber.isNotEmpty
+                        ? appointment.estimatedQueueNumber
+                        : '#--');
 
             final hospital =
                 queueState?.hospital ??
