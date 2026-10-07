@@ -187,11 +187,6 @@ class BookingService {
     final nRef = _db.collection('notifications').doc();
     final uRef = _db.collection('users').doc(user.uid);
 
-    // Same format as the register screen: DD/MM/YYYY
-    final dobDisplay = dob.length == 10 && dob.contains('-')
-        ? '${dob.substring(8, 10)}/${dob.substring(5, 7)}/${dob.substring(0, 4)}'
-        : dob;
-
     return _db.runTransaction<int>((tx) async {
       final h = await tx.get(hRef);
       if (h.data()?['status'] == 'full') {
@@ -242,8 +237,8 @@ class BookingService {
       final fill = <String, dynamic>{
         if ((um['fullName'] ?? '') == '') 'fullName': patientName,
         if ((um['nic'] ?? '') == '') 'nic': nic,
-        if ((um['dob'] ?? '') == '') 'dob': dobDisplay,
-        if ((um['contactNo'] ?? um['contact'] ?? '') == '') 'contactNo': contact,
+        if ((um['dob'] ?? '') == '') 'dob': dob,
+        if ((um['contact'] ?? '') == '') 'contact': contact,
         if ((um['email'] ?? '') == '' && user.email != null) 'email': user.email,
       };
       if (fill.isNotEmpty) tx.set(uRef, fill, SetOptions(merge: true));
@@ -274,7 +269,7 @@ class BookingService {
         fullName: m['fullName'] ?? user.displayName ?? '',
         nic: m['nic'] ?? '',
         dob: m['dob'] ?? '',
-        contact: m['contactNo'] ?? m['contact'] ?? user.phoneNumber ?? '',
+        contact: m['contact'] ?? user.phoneNumber ?? '',
         email: user.email ?? m['email'] ?? '',
       );
     });
@@ -296,43 +291,39 @@ class BookingService {
 
   /// Run ONCE (e.g. from main.dart) to fill an empty database with sample hospitals/doctors.
   Future<void> seedIfEmpty() async {
-    try {
-      final existing = await _db.collection('hospitals').limit(1).get();
-      if (existing.docs.isNotEmpty) return;
+    final existing = await _db.collection('hospitals').limit(1).get();
+    if (existing.docs.isNotEmpty) return;
 
-      const hospitals = [
-        ('city_general', 'City General Hospital', 'Western Province', 'Colombo', 'Colombo', 'open', 0),
-        ('district_hospital', 'District Hospital', 'Western Province', 'Gampaha', 'Negombo', 'full', 0),
-        ('teaching_hospital', 'Teaching Hospital', 'Central Province', 'Kandy', 'Kandy', 'limited', 3),
-        ('karapitiya', 'Karapitiya Hospital', 'Southern Province', 'Galle', 'Galle', 'open', 0),
-        ('jaffna_base', 'Jaffna Base Hospital', 'Northern Province', 'Jaffna', 'Jaffna', 'limited', 5),
-        ('kurunegala', 'Kurunegala Hospital', 'North Western Province', 'Kurunegala', 'Kurunegala', 'open', 0),
-      ];
-      const doctors = [
-        ('dr_perera', 'Dr. S. Perera', 'Internal Medicine'),
-        ('dr_fernando', 'Dr. R. Fernando', 'General Surgery'),
-        ('dr_silva', 'Dr. M. Silva', 'Paediatrics'),
-      ];
+    const hospitals = [
+      ('city_general', 'City General Hospital', 'Western Province', 'Colombo', 'Colombo', 'open', 0),
+      ('district_hospital', 'District Hospital', 'Western Province', 'Gampaha', 'Negombo', 'full', 0),
+      ('teaching_hospital', 'Teaching Hospital', 'Central Province', 'Kandy', 'Kandy', 'limited', 3),
+      ('karapitiya', 'Karapitiya Hospital', 'Southern Province', 'Galle', 'Galle', 'open', 0),
+      ('jaffna_base', 'Jaffna Base Hospital', 'Northern Province', 'Jaffna', 'Jaffna', 'limited', 5),
+      ('kurunegala', 'Kurunegala Hospital', 'North Western Province', 'Kurunegala', 'Kurunegala', 'open', 0),
+    ];
+    const doctors = [
+      ('dr_perera', 'Dr. S. Perera', 'Internal Medicine'),
+      ('dr_fernando', 'Dr. R. Fernando', 'General Surgery'),
+      ('dr_silva', 'Dr. M. Silva', 'Paediatrics'),
+    ];
 
-      final batch = _db.batch();
-      for (final h in hospitals) {
-        final ref = _db.collection('hospitals').doc(h.$1);
-        batch.set(ref, {
-          'name': h.$2,
-          'province': h.$3,
-          'district': h.$4,
-          'city': h.$5,
-          'status': h.$6,
-          'slotsLeft': h.$7,
-        });
-        for (final d in doctors) {
-          batch.set(ref.collection('doctors').doc(d.$1),
-              {'name': d.$2, 'speciality': d.$3});
-        }
+    final batch = _db.batch();
+    for (final h in hospitals) {
+      final ref = _db.collection('hospitals').doc(h.$1);
+      batch.set(ref, {
+        'name': h.$2,
+        'province': h.$3,
+        'district': h.$4,
+        'city': h.$5,
+        'status': h.$6,
+        'slotsLeft': h.$7,
+      });
+      for (final d in doctors) {
+        batch.set(ref.collection('doctors').doc(d.$1),
+            {'name': d.$2, 'speciality': d.$3});
       }
-      await batch.commit();
-    } catch (e) {
-      debugPrint('BookingService.seedIfEmpty skipped or failed: $e');
     }
+    await batch.commit();
   }
 }

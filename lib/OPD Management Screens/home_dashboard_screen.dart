@@ -69,9 +69,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 : 'Good Morning, Nurse',
             nurseId: widget.nurseId != null && widget.nurseId!.isNotEmpty
                 ? 'ID: ${widget.nurseId}'
-                : 'Staff Nurse',
+                : 'ID: NUR1002-0011',
             department: widget.department ?? 'General Medicine OPD',
-            hospital: widget.hospital ?? 'Hospital',
+            hospital: widget.hospital ?? 'Government Hospital — Colombo',
             onAvatarTap: () {
               showDialog(
                 context: context,
