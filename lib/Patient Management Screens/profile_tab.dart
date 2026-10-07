@@ -22,9 +22,18 @@ class _ProfileTabState extends State<ProfileTab> {
     'August', 'September', 'October', 'November', 'December'
   ];
 
-  String _dob(String iso) {
-    final d = DateTime.tryParse(iso);
-    if (d == null) return iso.isEmpty ? '-' : iso;
+  /// Accepts "YYYY-MM-DD" or "DD/MM/YYYY" and shows "15 March 1990".
+  String _dob(String v) {
+    if (v.isEmpty) return '-';
+    var d = DateTime.tryParse(v);
+    if (d == null) {
+      final p = v.split('/');
+      if (p.length == 3) {
+        d = DateTime.tryParse(
+            '${p[2]}-${p[1].padLeft(2, '0')}-${p[0].padLeft(2, '0')}');
+      }
+    }
+    if (d == null) return v;
     return '${d.day} ${_months[d.month - 1]} ${d.year}';
   }
 
