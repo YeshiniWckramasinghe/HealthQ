@@ -32,9 +32,9 @@ class _PatientManagementHubScreenState
           // Header banner with hospital corridor photo
           const OpdHeaderBanner(
             title: 'Patient Management',
-            nurseId: 'Staff Nurse',
-            department: 'General OPD',
-            hospital: 'Government Hospital',
+            nurseId: 'ID: NUR1002-021',
+            department: 'General Medicine OPD',
+            hospital: 'Government Hospital — Colombo',
           ),
 
           // Content

@@ -303,48 +303,42 @@ class StaffProfileConfirmScreen extends StatelessWidget {
                     _buildDetailRow(
                       icon: Icons.local_hospital_outlined,
                       label: 'Assigned Hospital',
-                      value: staff.hospital.isNotEmpty ? staff.hospital : 'Hospital Not Specified',
+                      value: staff.hospital,
                     ),
                     const SizedBox(height: 12),
 
                     _buildDetailRow(
                       icon: Icons.apartment_outlined,
                       label: 'Department / Unit',
-                      value: (staff.department != null && staff.department!.isNotEmpty)
-                          ? staff.department!
-                          : 'General OPD',
+                      value: staff.department ?? 'General Outpatient Department',
                     ),
                     const SizedBox(height: 12),
 
                     _buildDetailRow(
                       icon: Icons.biotech_outlined,
                       label: 'Specialty / Clinic',
-                      value: (staff.specialty != null && staff.specialty!.isNotEmpty)
-                          ? staff.specialty!
-                          : (_isDoctor ? 'General Medicine' : 'General Care'),
+                      value: staff.specialty ?? 'General OPD',
                     ),
                     const SizedBox(height: 12),
 
                     _buildDetailRow(
                       icon: Icons.meeting_room_outlined,
                       label: 'Room / Counter',
-                      value: (staff.room != null && staff.room!.isNotEmpty)
-                          ? staff.room!
-                          : 'Not Assigned',
+                      value: staff.room ?? 'Room 01',
                     ),
                     const SizedBox(height: 12),
 
                     _buildDetailRow(
                       icon: Icons.email_outlined,
                       label: 'Official Email (for OTP)',
-                      value: staff.email.isNotEmpty ? staff.email : 'Not Registered',
+                      value: staff.email,
                     ),
                     const SizedBox(height: 12),
 
                     _buildDetailRow(
                       icon: Icons.phone_outlined,
                       label: 'Contact Number (for SMS)',
-                      value: staff.contactNo.isNotEmpty ? staff.contactNo : 'Not Registered',
+                      value: staff.contactNo,
                     ),
                   ],
                 ),
