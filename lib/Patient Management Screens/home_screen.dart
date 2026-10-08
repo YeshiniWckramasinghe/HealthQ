@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
@@ -25,6 +26,16 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _index = 1);
   }
 
+  void _openFindHospital() {
+    _apptKey.currentState?.openFindHospital();
+    setState(() => _index = 1);
+  }
+
+  void _openBookAppointment() {
+    _apptKey.currentState?.openBookAppointment();
+    setState(() => _index = 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -49,7 +60,8 @@ class _HomeScreenState extends State<HomeScreen> {
             _HomeTab(
               appointments: _appointments,
               profile: _profile,
-              onBook: () => setState(() => _index = 1),
+              onFindHospital: _openFindHospital,
+              onBook: _openBookAppointment,
               onHistory: _openHistory,
               onNotifications: () => setState(() => _index = 2),
             ),
@@ -70,7 +82,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ? null
           : BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        onTap: (i) {
+          if (i == 1) {
+            _openBookAppointment();
+          } else {
+            setState(() => _index = i);
+          }
+        },
         type: BottomNavigationBarType.fixed,
         backgroundColor: AppColors.white,
         selectedItemColor: AppColors.primary300,
@@ -95,11 +113,12 @@ class _HomeScreenState extends State<HomeScreen> {
 class _HomeTab extends StatelessWidget {
   final Stream<List<AppointmentRecord>> appointments;
   final Stream<UserProfile> profile;
-  final VoidCallback onBook, onHistory, onNotifications;
+  final VoidCallback onFindHospital, onBook, onHistory, onNotifications;
 
   const _HomeTab({
     required this.appointments,
     required this.profile,
+    required this.onFindHospital,
     required this.onBook,
     required this.onHistory,
     required this.onNotifications,
@@ -115,13 +134,35 @@ class _HomeTab extends StatelessWidget {
           children: [
             StreamBuilder<UserProfile>(
               stream: profile,
-              builder: (context, snap) => CircleAvatar(
-                radius: 16,
-                backgroundColor: AppColors.primary300,
-                child: Text(snap.data?.initials ?? '',
-                    style:
-                        const TextStyle(color: AppColors.white, fontSize: 13)),
-              ),
+              builder: (context, snap) {
+                final u = snap.data;
+                if (u != null && u.photoBase64.isNotEmpty) {
+                  try {
+                    final raw = u.photoBase64.contains(',')
+                        ? u.photoBase64.split(',')[1]
+                        : u.photoBase64;
+                    return CircleAvatar(
+                      radius: 16,
+                      backgroundImage: MemoryImage(base64Decode(raw)),
+                    );
+                  } catch (_) {}
+                }
+                if (u != null &&
+                    u.photoUrl.isNotEmpty &&
+                    u.photoUrl.startsWith('http')) {
+                  return CircleAvatar(
+                    radius: 16,
+                    backgroundImage: NetworkImage(u.photoUrl),
+                  );
+                }
+                return CircleAvatar(
+                  radius: 16,
+                  backgroundColor: AppColors.primary300,
+                  child: Text(snap.data?.initials ?? '',
+                      style:
+                          const TextStyle(color: AppColors.white, fontSize: 13)),
+                );
+              },
             ),
             const Expanded(
               child: Center(
@@ -216,15 +257,19 @@ class _HomeTab extends StatelessWidget {
                 .toList()
               ..sort((a, b) => a.date.compareTo(b.date));
             if (upcoming.isEmpty) {
-              return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.white,
-                  borderRadius: BorderRadius.circular(14),
+              return InkWell(
+                onTap: onBook,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Text(
+                      'No upcoming appointment. Tap "Book Appointment" to make one.',
+                      style: TextStyle(fontSize: 12, color: AppColors.gray400)),
                 ),
-                child: const Text(
-                    'No upcoming appointment. Tap "Book Appointment" to make one.',
-                    style: TextStyle(fontSize: 12, color: AppColors.gray400)),
               );
             }
             final a = upcoming.first;
@@ -318,7 +363,7 @@ class _HomeTab extends StatelessWidget {
         // Quick actions
         Row(
           children: [
-            _action(Icons.local_hospital_outlined, 'Find\nHospital', onBook),
+            _action(Icons.local_hospital_outlined, 'Find\nHospital', onFindHospital),
             const SizedBox(width: 10),
             _action(Icons.event_available_outlined, 'Book\nAppointment', onBook),
             const SizedBox(width: 10),
