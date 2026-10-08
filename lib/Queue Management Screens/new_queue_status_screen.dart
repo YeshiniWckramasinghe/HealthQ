@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'estimated_waiting_time_screen.dart';
 import 'queue_flow_controller.dart';
-import 'queue_status_screen.dart';
+import 'queue_status_screen.dart' hide EstimatedWaitingTimeScreen;
 
 class NewQueueStatusScreen extends StatelessWidget {
   const NewQueueStatusScreen({
@@ -108,6 +108,7 @@ class NewQueueStatusScreen extends StatelessWidget {
                             const BouncingScrollPhysics(),
                         child:
                             _buildContent(
+                          context,
                           width,
                           patients,
                           current,
@@ -130,6 +131,7 @@ class NewQueueStatusScreen extends StatelessWidget {
   }
 
   Widget _buildContent(
+    BuildContext context,
     double width,
     List<QueuePatient> patients,
     int current,

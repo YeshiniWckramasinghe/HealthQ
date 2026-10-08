@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'my_turn_screen.dart';
 import 'queue_status_screen.dart';
 import '../Patient Management Screens/home_screen.dart';
 import '../Patient Management Screens/appointments_tab.dart';
@@ -11,7 +10,7 @@ import '../Patient Management Screens/appointments_tab.dart';
 class EstimatedWaitingTimeScreen extends StatefulWidget {
   final int yourQueueNumber;
   final int averageMinutesPerPatient;
-  final List<int> patients;
+  final List<QueuePatient> patients;
 
   const EstimatedWaitingTimeScreen({
     super.key,
@@ -34,8 +33,6 @@ class _EstimatedWaitingTimeScreenState
   int _patientsAhead = 0;
 
   int _initialMinutes = 0;
-  int _remainingMinutes = 0;
-
   double _progress = 1.0;
 
   String _queueText = '';
@@ -55,15 +52,15 @@ class _EstimatedWaitingTimeScreenState
 
   void _calculateWaitingTime() {
     _patientsAhead = widget.patients
-        .where((number) => number < widget.yourQueueNumber)
+        .where((patient) =>
+            int.tryParse(patient.queueNumber) != null &&
+            int.parse(patient.queueNumber) < widget.yourQueueNumber)
         .length;
 
     _estimatedMinutes =
         _patientsAhead * widget.averageMinutesPerPatient;
 
     _initialMinutes = _estimatedMinutes;
-    _remainingMinutes = _estimatedMinutes;
-
     _remainingSeconds = _estimatedMinutes * 60;
 
     _progress = _initialMinutes > 0 ? 1.0 : 0.0;
@@ -95,8 +92,6 @@ class _EstimatedWaitingTimeScreenState
         setState(() {
           _remainingSeconds--;
 
-          _remainingMinutes =
-              (_remainingSeconds / 60).ceil();
 
           if (_initialMinutes > 0) {
             _progress =
@@ -351,12 +346,13 @@ class _EstimatedWaitingTimeScreenState
             physics:
                 const BouncingScrollPhysics(),
             itemCount: widget.patients.length,
-            separatorBuilder: (_, __) =>
+            separatorBuilder: (_, _) =>
                 const SizedBox(width: 10),
             itemBuilder: (context, index) {
-              final number = widget.patients[index];
+              final patient = widget.patients[index];
+              final number = int.tryParse(patient.queueNumber) ?? 0;
               final isYourNumber =
-                  number == widget.yourQueueNumber;
+                number == widget.yourQueueNumber;
 
               return Container(
                 width: 52,
@@ -437,6 +433,7 @@ class _EstimatedWaitingTimeScreenState
                       MyTurnScreen(
                     yourQueueNumber:
                         widget.yourQueueNumber,
+                    patients: widget.patients,
                   ),
                 ),
               );

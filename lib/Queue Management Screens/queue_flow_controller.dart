@@ -132,6 +132,10 @@ class QueueFlowController {
     _notify();
   }
 
+  void reset() {
+    clear();
+  }
+
   void clear() {
     notifications.clear();
 
