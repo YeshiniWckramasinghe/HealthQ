@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'appointment_service.dart';
 import 'queue_status_screen.dart';
 
-// Appointment booking / backend should provide these values.
+// ============================================================================
+// APPOINTMENT MODEL
+// ============================================================================
+//
+// Appointment booking / Firestore backend provides these values.
 // No sample patient values are included.
+// ============================================================================
+
 class CheckInAppointment {
   const CheckInAppointment({
     required this.appointmentId,
@@ -33,12 +40,18 @@ class CheckInAppointment {
   final String dateOfBirth;
 }
 
-// Later, connect this function to your appointment repository/backend.
-// It should return the correct appointment or null when none is found.
+// ============================================================================
+// OPTIONAL LOOKUP CALLBACK
+// ============================================================================
+
 typedef CheckInAppointmentLookup = Future<CheckInAppointment?> Function(
   String nic,
   String? appointmentId,
 );
+
+// ============================================================================
+// CHECK IN SCREEN
+// ============================================================================
 
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({
@@ -51,20 +64,25 @@ class CheckInScreen extends StatefulWidget {
 
   final CheckInAppointment? bookedAppointment;
 
-  // Optional backend lookup, connected later.
+  // Optional custom backend lookup.
+  // When this is null, AppointmentService.findAppointment()
+  // will be used automatically.
   final CheckInAppointmentLookup? lookupAppointment;
 
-  // Receives the matched appointment.
-  // Backend check-in / queue synchronization can be connected here.
+  // Receives the matched appointment after successful check-in.
   final ValueChanged<CheckInAppointment>? onCheckIn;
 
   // Check-in is displayed inside HomeScreen's IndexedStack.
-  // Therefore this callback is used to return directly to Home.
+  // This callback returns directly to Home.
   final VoidCallback? onBackToHome;
 
   @override
   State<CheckInScreen> createState() => _CheckInScreenState();
 }
+
+// ============================================================================
+// STATE
+// ============================================================================
 
 class _CheckInScreenState extends State<CheckInScreen> {
   static const _background = Color(0xFFF0F7F6);
@@ -82,58 +100,104 @@ class _CheckInScreenState extends State<CheckInScreen> {
   );
 
   final _formKey = GlobalKey<FormState>();
+
   final _nicController = TextEditingController();
-  final _appointmentController = TextEditingController();
+
+  final _appointmentController =
+      TextEditingController();
 
   CheckInAppointment? _appointment;
+
   bool _loading = false;
+
   String? _lookupError;
 
-  // Prevent an old lookup result from filling the card after input changes.
+  // Prevent an old lookup result from filling the card
+  // after input changes.
   int _requestVersion = 0;
 
-  String get _nic => _nicController.text.trim().toUpperCase();
+  String get _nic =>
+      _nicController.text.trim().toUpperCase();
 
   String get _appointmentId =>
       _appointmentController.text.trim().toUpperCase();
 
+  // ==========================================================================
+  // INIT
+  // ==========================================================================
+
   @override
   void initState() {
     super.initState();
-    _applyBookingToFields(widget.bookedAppointment);
+
+    _applyBookingToFields(
+      widget.bookedAppointment,
+    );
   }
 
-  void _applyBookingToFields(CheckInAppointment? booking) {
-    if (booking == null) return;
+  // ==========================================================================
+  // APPLY BOOKED APPOINTMENT
+  // ==========================================================================
+
+  void _applyBookingToFields(
+    CheckInAppointment? booking,
+  ) {
+    if (booking == null) {
+      return;
+    }
 
     _nicController.text = booking.nic;
-    _appointmentController.text = booking.appointmentId;
+
+    _appointmentController.text =
+        booking.appointmentId;
+
     _appointment = booking;
   }
 
+  // ==========================================================================
+  // WIDGET UPDATE
+  // ==========================================================================
+
   @override
-  void didUpdateWidget(covariant CheckInScreen oldWidget) {
+  void didUpdateWidget(
+    covariant CheckInScreen oldWidget,
+  ) {
     super.didUpdateWidget(oldWidget);
 
-    if (oldWidget.bookedAppointment != widget.bookedAppointment ||
-        oldWidget.lookupAppointment != widget.lookupAppointment) {
-      _applyBookingToFields(widget.bookedAppointment);
+    if (oldWidget.bookedAppointment !=
+            widget.bookedAppointment ||
+        oldWidget.lookupAppointment !=
+            widget.lookupAppointment) {
+      _applyBookingToFields(
+        widget.bookedAppointment,
+      );
+
       _inputChanged();
     }
   }
+
+  // ==========================================================================
+  // DISPOSE
+  // ==========================================================================
 
   @override
   void dispose() {
     _requestVersion++;
 
     _nicController.dispose();
+
     _appointmentController.dispose();
 
     super.dispose();
   }
 
+  // ==========================================================================
+  // NIC VALIDATION
+  // ==========================================================================
+
   String? _validateNic(String? value) {
-    final nic = (value ?? '').trim().toUpperCase();
+    final nic =
+        (value ?? '').trim().toUpperCase();
 
     if (nic.isEmpty) {
       return 'NIC is required.';
@@ -146,81 +210,148 @@ class _CheckInScreenState extends State<CheckInScreen> {
     return null;
   }
 
-  bool _matches(CheckInAppointment appointment) {
-    final matchesNic =
-        appointment.nic.trim().toUpperCase() == _nic;
+  // ==========================================================================
+  // CHECK APPOINTMENT MATCH
+  // ==========================================================================
 
-    final matchesId = _appointmentId.isEmpty ||
-        appointment.appointmentId.trim().toUpperCase() ==
+  bool _matches(
+    CheckInAppointment appointment,
+  ) {
+    final matchesNic =
+        appointment.nic
+                .trim()
+                .toUpperCase() ==
+            _nic;
+
+    final matchesId =
+        _appointmentId.isEmpty ||
+        appointment.appointmentId
+                .trim()
+                .toUpperCase() ==
             _appointmentId;
 
     return matchesNic && matchesId;
   }
 
+  // ==========================================================================
+  // INPUT CHANGED
+  // ==========================================================================
+
   void _inputChanged() {
     _requestVersion++;
 
-    final booking = widget.bookedAppointment;
+    final booking =
+        widget.bookedAppointment;
 
     setState(() {
       _loading = false;
+
       _lookupError = null;
 
-      _appointment = _validateNic(_nic) == null &&
-              booking != null &&
-              _matches(booking)
-          ? booking
-          : null;
+      _appointment =
+          _validateNic(_nic) == null &&
+                  booking != null &&
+                  _matches(booking)
+              ? booking
+              : null;
     });
   }
 
-  Future<void> _checkIn() async {
-    if (_loading) return;
+  // ==========================================================================
+  // CHECK IN
+  // ==========================================================================
 
-    if (!(_formKey.currentState?.validate() ?? false)) {
+  Future<void> _checkIn() async {
+    if (_loading) {
+      return;
+    }
+
+    if (!(_formKey.currentState?.validate() ??
+        false)) {
       return;
     }
 
     FocusScope.of(context).unfocus();
 
-    final lookup = widget.lookupAppointment;
-    var matchedAppointment = _appointment;
+    final lookup =
+        widget.lookupAppointment;
 
-    if (matchedAppointment == null && lookup != null) {
-      final request = ++_requestVersion;
+    var matchedAppointment =
+        _appointment;
+
+    // ------------------------------------------------------------------------
+    // LOOKUP APPOINTMENT
+    // ------------------------------------------------------------------------
+
+    if (matchedAppointment == null) {
+      final request =
+          ++_requestVersion;
+
       final requestedNic = _nic;
-      final requestedId = _appointmentId;
+
+      final requestedId =
+          _appointmentId;
 
       setState(() {
         _loading = true;
+
         _lookupError = null;
       });
 
       try {
-        final result = await lookup(
-          requestedNic,
-          requestedId.isEmpty ? null : requestedId,
-        );
+        CheckInAppointment? result;
 
-        if (!mounted || request != _requestVersion) {
+        // --------------------------------------------------------------------
+        // If parent supplied a custom lookup, use it.
+        // Otherwise use the real Firestore backend.
+        // --------------------------------------------------------------------
+
+        if (lookup != null) {
+          result = await lookup(
+            requestedNic,
+            requestedId.isEmpty
+                ? null
+                : requestedId,
+          );
+        } else {
+          result =
+              await AppointmentService.findAppointment(
+            nic: requestedNic,
+            appointmentId:
+                requestedId.isEmpty
+                    ? null
+                    : requestedId,
+          );
+        }
+
+        if (!mounted ||
+            request != _requestVersion) {
           return;
         }
 
         matchedAppointment =
-            result != null && _matches(result) ? result : null;
+            result != null &&
+                    _matches(result)
+                ? result
+                : null;
 
         setState(() {
           _loading = false;
-          _appointment = matchedAppointment;
+
+          _appointment =
+              matchedAppointment;
         });
-      } catch (_) {
-        if (!mounted || request != _requestVersion) {
+      } catch (e) {
+        if (!mounted ||
+            request != _requestVersion) {
           return;
         }
 
         setState(() {
           _loading = false;
+
           _appointment = null;
+
           _lookupError =
               'Unable to load appointment details. Please try again.';
         });
@@ -229,38 +360,116 @@ class _CheckInScreenState extends State<CheckInScreen> {
       }
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
+
+    // ------------------------------------------------------------------------
+    // NO APPOINTMENT FOUND
+    // ------------------------------------------------------------------------
 
     if (matchedAppointment == null) {
       setState(() {
         _lookupError =
-            widget.bookedAppointment == null && lookup == null
-                ? 'Appointment booking is not connected yet.'
-                : 'No matching appointment found. Check your details.';
+            'No matching appointment found. Check your details.';
       });
 
       return;
     }
 
+    // ------------------------------------------------------------------------
+    // VALIDATE APPOINTMENT ID WHEN PROVIDED
+    // ------------------------------------------------------------------------
+
+    if (!_matches(matchedAppointment)) {
+      setState(() {
+        _lookupError =
+            'Appointment details do not match the entered NIC.';
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------------------------------
+    // GET QUEUE NUMBER
+    // ------------------------------------------------------------------------
+
+    final queueNumber = int.tryParse(
+      matchedAppointment
+          .estimatedQueueNumber
+          .trim(),
+    );
+
+    if (queueNumber == null ||
+        queueNumber <= 0) {
+      setState(() {
+        _lookupError =
+            'Queue number is not available for this appointment.';
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------------------------------
+    // UPDATE FIRESTORE
+    // ------------------------------------------------------------------------
+
     setState(() {
+      _loading = true;
+
       _lookupError = null;
-      _loading = false;
     });
 
-    // Send the matched appointment back to HomeScreen/backend.
-    widget.onCheckIn?.call(matchedAppointment);
+    try {
+      await AppointmentService.markAsCheckedIn(
+        appointmentId:
+            matchedAppointment.appointmentId,
+        queueNumber: queueNumber,
+      );
 
-    if (!mounted) return;
+      // ----------------------------------------------------------------------
+      // Notify parent / HomeScreen
+      // ----------------------------------------------------------------------
 
-    // -------------------------------------------------------------
-    // QUEUE STATUS
-    // -------------------------------------------------------------
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const QueueStatusScreen(),
-      ),
-    );
+      widget.onCheckIn?.call(
+        matchedAppointment,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+      });
+
+      // ----------------------------------------------------------------------
+      // GO TO QUEUE STATUS
+      // ----------------------------------------------------------------------
+
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              const QueueStatusScreen(),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+
+        _lookupError =
+            'Check-in failed. Please try again.';
+      });
+    }
   }
+
+  // ==========================================================================
+  // BACK TO HOME
+  // ==========================================================================
 
   void _goBackToHome() {
     if (widget.onBackToHome != null) {
@@ -270,18 +479,27 @@ class _CheckInScreenState extends State<CheckInScreen> {
     }
   }
 
+  // ==========================================================================
+  // INPUT BORDER
+  // ==========================================================================
+
   OutlineInputBorder _outline(
     Color color, {
     double width = 1,
   }) {
     return OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius:
+          BorderRadius.circular(12),
       borderSide: BorderSide(
         color: color,
         width: width,
       ),
     );
   }
+
+  // ==========================================================================
+  // INPUT DECORATION
+  // ==========================================================================
 
   InputDecoration _decoration({
     String? hint,
@@ -297,18 +515,24 @@ class _CheckInScreenState extends State<CheckInScreen> {
       filled: true,
       fillColor: Colors.white,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(
+      contentPadding:
+          const EdgeInsets.symmetric(
         horizontal: 14,
         vertical: 15,
       ),
-      enabledBorder: _outline(_border),
-      border: _outline(_border),
-      focusedBorder: _outline(
+      enabledBorder:
+          _outline(_border),
+      border:
+          _outline(_border),
+      focusedBorder:
+          _outline(
         _primary,
         width: 1.5,
       ),
-      errorBorder: _outline(_error),
-      focusedErrorBorder: _outline(
+      errorBorder:
+          _outline(_error),
+      focusedErrorBorder:
+          _outline(
         _error,
         width: 1.5,
       ),
@@ -321,15 +545,24 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
+  // ==========================================================================
+  // BUILD
+  // ==========================================================================
+
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
+    return AnnotatedRegion<
+        SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-        statusBarBrightness: Brightness.light,
-        systemNavigationBarColor: _background,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        statusBarIconBrightness:
+            Brightness.dark,
+        statusBarBrightness:
+            Brightness.light,
+        systemNavigationBarColor:
+            _background,
+        systemNavigationBarIconBrightness:
+            Brightness.dark,
       ),
       child: Scaffold(
         backgroundColor: _background,
@@ -339,13 +572,17 @@ class _CheckInScreenState extends State<CheckInScreen> {
           child: Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
+              constraints:
+                  const BoxConstraints(
                 maxWidth: 480,
               ),
-              child: SingleChildScrollView(
+              child:
+                  SingleChildScrollView(
                 keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(
+                    ScrollViewKeyboardDismissBehavior
+                        .onDrag,
+                padding:
+                    const EdgeInsets.fromLTRB(
                   16,
                   8,
                   16,
@@ -354,85 +591,124 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 child: Form(
                   key: _formKey,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment
+                            .start,
                     children: [
-                      // -------------------------------------------------
+                      // ------------------------------------------------------
                       // HEADER + BACK BUTTON
-                      // -------------------------------------------------
+                      // ------------------------------------------------------
 
                       Row(
                         children: [
                           Material(
                             color: Colors.white,
-                            shape: const CircleBorder(),
+                            shape:
+                                const CircleBorder(),
                             child: InkWell(
-                              onTap: _goBackToHome,
-                              customBorder: const CircleBorder(),
-                              child: const SizedBox(
+                              onTap:
+                                  _goBackToHome,
+                              customBorder:
+                                  const CircleBorder(),
+                              child:
+                                  const SizedBox(
                                 width: 42,
                                 height: 42,
                                 child: Icon(
-                                  Icons.arrow_back_ios_new,
+                                  Icons
+                                      .arrow_back_ios_new,
                                   color: _dark,
                                   size: 19,
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(
+                            width: 12,
+                          ),
                           const Text(
                             'Check In',
                             style: TextStyle(
                               color: _dark,
                               fontSize: 24,
-                              fontWeight: FontWeight.w800,
+                              fontWeight:
+                                  FontWeight.w800,
                               height: 1.2,
                             ),
                           ),
                         ],
                       ),
 
-                      const SizedBox(height: 14),
+                      const SizedBox(
+                        height: 14,
+                      ),
 
                       _buildBanner(),
 
-                      const SizedBox(height: 28),
+                      const SizedBox(
+                        height: 28,
+                      ),
 
                       Padding(
-                        padding: const EdgeInsets.symmetric(
+                        padding:
+                            const EdgeInsets
+                                .symmetric(
                           horizontal: 8,
                         ),
                         child: Column(
                           children: [
+                            // ------------------------------------------------
+                            // NIC
+                            // ------------------------------------------------
+
                             TextFormField(
-                              controller: _nicController,
-                              validator: _validateNic,
+                              controller:
+                                  _nicController,
+                              validator:
+                                  _validateNic,
                               autovalidateMode:
-                                  AutovalidateMode.onUserInteraction,
-                              onChanged: (_) => _inputChanged(),
-                              textInputAction: TextInputAction.next,
+                                  AutovalidateMode
+                                      .onUserInteraction,
+                              onChanged: (_) =>
+                                  _inputChanged(),
+                              textInputAction:
+                                  TextInputAction
+                                      .next,
                               textCapitalization:
-                                  TextCapitalization.characters,
+                                  TextCapitalization
+                                      .characters,
                               autocorrect: false,
-                              enableSuggestions: false,
-                              style: const TextStyle(
+                              enableSuggestions:
+                                  false,
+                              style:
+                                  const TextStyle(
                                 color: _dark,
                                 fontSize: 14,
                               ),
-                              decoration: _decoration(
-                                label: const Text.rich(
+                              decoration:
+                                  _decoration(
+                                label:
+                                    const Text
+                                        .rich(
                                   TextSpan(
                                     text: 'NIC',
-                                    style: TextStyle(
-                                      color: _muted,
-                                      fontSize: 14,
+                                    style:
+                                        TextStyle(
+                                      color:
+                                          _muted,
+                                      fontSize:
+                                          14,
                                     ),
                                     children: [
                                       TextSpan(
                                         text: ' *',
-                                        style: TextStyle(
-                                          color: _error,
-                                          fontWeight: FontWeight.w700,
+                                        style:
+                                            TextStyle(
+                                          color:
+                                              _error,
+                                          fontWeight:
+                                              FontWeight
+                                                  .w700,
                                         ),
                                       ),
                                     ],
@@ -441,73 +717,132 @@ class _CheckInScreenState extends State<CheckInScreen> {
                               ),
                             ),
 
-                            const SizedBox(height: 12),
+                            const SizedBox(
+                              height: 12,
+                            ),
+
+                            // ------------------------------------------------
+                            // APPOINTMENT ID
+                            // ------------------------------------------------
 
                             TextFormField(
-                              controller: _appointmentController,
-                              onChanged: (_) => _inputChanged(),
-                              textInputAction: TextInputAction.done,
-                              onFieldSubmitted: (_) => _checkIn(),
+                              controller:
+                                  _appointmentController,
+                              onChanged: (_) =>
+                                  _inputChanged(),
+                              textInputAction:
+                                  TextInputAction
+                                      .done,
+                              onFieldSubmitted:
+                                  (_) =>
+                                      _checkIn(),
                               textCapitalization:
-                                  TextCapitalization.characters,
+                                  TextCapitalization
+                                      .characters,
                               autocorrect: false,
-                              enableSuggestions: false,
-                              style: const TextStyle(
+                              enableSuggestions:
+                                  false,
+                              style:
+                                  const TextStyle(
                                 color: _dark,
                                 fontSize: 14,
                               ),
-                              decoration: _decoration(
-                                hint: 'Appointment ID',
+                              decoration:
+                                  _decoration(
+                                hint:
+                                    'Appointment ID',
                               ),
                             ),
 
-                            const SizedBox(height: 14),
+                            const SizedBox(
+                              height: 14,
+                            ),
+
+                            // ------------------------------------------------
+                            // CHECK IN BUTTON
+                            // ------------------------------------------------
 
                             SizedBox(
-                              width: double.infinity,
+                              width:
+                                  double.infinity,
                               height: 48,
-                              child: ElevatedButton(
-                                onPressed: _loading ? null : _checkIn,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _primary,
-                                  foregroundColor: Colors.white,
-                                  disabledBackgroundColor: _primary,
-                                  disabledForegroundColor: Colors.white,
+                              child:
+                                  ElevatedButton(
+                                onPressed:
+                                    _loading
+                                        ? null
+                                        : _checkIn,
+                                style:
+                                    ElevatedButton
+                                        .styleFrom(
+                                  backgroundColor:
+                                      _primary,
+                                  foregroundColor:
+                                      Colors.white,
+                                  disabledBackgroundColor:
+                                      _primary,
+                                  disabledForegroundColor:
+                                      Colors.white,
                                   elevation: 0,
-                                  shape: const StadiumBorder(),
-                                  textStyle: const TextStyle(
+                                  shape:
+                                      const StadiumBorder(),
+                                  textStyle:
+                                      const TextStyle(
                                     fontSize: 16,
-                                    fontWeight: FontWeight.w700,
+                                    fontWeight:
+                                        FontWeight
+                                            .w700,
                                   ),
                                 ),
                                 child: _loading
                                     ? const SizedBox(
                                         width: 20,
                                         height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
+                                        child:
+                                            CircularProgressIndicator(
+                                          strokeWidth:
+                                              2,
+                                          color:
+                                              Colors.white,
                                         ),
                                       )
-                                    : const Text('Check In'),
+                                    : const Text(
+                                        'Check In',
+                                      ),
                               ),
                             ),
 
-                            if (_lookupError != null)
+                            // ------------------------------------------------
+                            // ERROR
+                            // ------------------------------------------------
+
+                            if (_lookupError !=
+                                null)
                               Padding(
-                                padding: const EdgeInsets.only(
+                                padding:
+                                    const EdgeInsets
+                                        .only(
                                   top: 8,
                                 ),
                                 child: Text(
                                   _lookupError!,
-                                  style: const TextStyle(
-                                    color: _error,
-                                    fontSize: 11,
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        _error,
+                                    fontSize:
+                                        11,
                                   ),
                                 ),
                               ),
 
-                            const SizedBox(height: 18),
+                            const SizedBox(
+                              height: 18,
+                            ),
+
+                            // ------------------------------------------------
+                            // APPOINTMENT DETAILS
+                            // ------------------------------------------------
 
                             _buildDetailsCard(),
                           ],
@@ -524,9 +859,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
+  // ==========================================================================
+  // BANNER
+  // ==========================================================================
+
   Widget _buildBanner() {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius:
+          BorderRadius.circular(16),
       child: AspectRatio(
         aspectRatio: 2.24,
         child: Stack(
@@ -543,15 +883,19 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 return const ColoredBox(
                   color: _dark,
                   child: Align(
-                    alignment: Alignment.bottomCenter,
+                    alignment:
+                        Alignment.bottomCenter,
                     child: Padding(
-                      padding: EdgeInsets.all(8),
+                      padding:
+                          EdgeInsets.all(8),
                       child: Text(
                         'Image missing: check '
                         'lib/assets/images/check_in_hospital.jpg',
-                        textAlign: TextAlign.center,
+                        textAlign:
+                            TextAlign.center,
                         style: TextStyle(
-                          color: Colors.white,
+                          color:
+                              Colors.white,
                           fontSize: 10,
                         ),
                       ),
@@ -561,14 +905,17 @@ class _CheckInScreenState extends State<CheckInScreen> {
               },
             ),
             ColoredBox(
-              color: Colors.black.withValues(
+              color:
+                  Colors.black.withValues(
                 alpha: 0.38,
               ),
             ),
             const Align(
-              alignment: Alignment.centerLeft,
+              alignment:
+                  Alignment.centerLeft,
               child: Padding(
-                padding: EdgeInsets.all(12),
+                padding:
+                    EdgeInsets.all(12),
                 child: Text(
                   'Enter your details to check in for your\n'
                   'appointment today',
@@ -586,10 +933,16 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Widget _buildDetailsCard() {
-    final appointment = _appointment;
+  // ==========================================================================
+  // APPOINTMENT DETAILS CARD
+  // ==========================================================================
 
-    final rows = <MapEntry<String, String>>[
+  Widget _buildDetailsCard() {
+    final appointment =
+        _appointment;
+
+    final rows =
+        <MapEntry<String, String>>[
       MapEntry(
         'Hospital',
         appointment?.hospital ?? '',
@@ -628,25 +981,32 @@ class _CheckInScreenState extends State<CheckInScreen> {
       ),
       MapEntry(
         'Appointment ID',
-        appointment?.appointmentId.isNotEmpty == true
+        appointment
+                    ?.appointmentId
+                    .isNotEmpty ==
+                true
             ? appointment!.appointmentId
             : 'Optional / not assigned',
       ),
       MapEntry(
         'Est. Queue No.',
-        appointment?.estimatedQueueNumber ?? '',
+        appointment
+                ?.estimatedQueueNumber ??
+            '',
       ),
     ];
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
+      padding:
+          const EdgeInsets.symmetric(
         horizontal: 14,
         vertical: 12,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius:
+            BorderRadius.circular(16),
         border: Border.all(
           color: _border,
         ),
@@ -655,40 +1015,52 @@ class _CheckInScreenState extends State<CheckInScreen> {
         children: List.generate(
           rows.length,
           (index) {
-            final row = rows[index];
+            final row =
+                rows[index];
 
             return Padding(
               padding: EdgeInsets.only(
-                bottom: index == rows.length - 1 ? 0 : 8,
+                bottom:
+                    index ==
+                            rows.length - 1
+                        ? 0
+                        : 8,
               ),
               child: Row(
                 crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                    CrossAxisAlignment
+                        .start,
                 children: [
                   Expanded(
                     flex: 4,
                     child: Text(
                       row.key,
-                      style: const TextStyle(
+                      style:
+                          const TextStyle(
                         color: _muted,
                         fontSize: 13,
                         height: 1.25,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 8,
+                  ),
                   Expanded(
                     flex: 7,
                     child: Text(
                       row.value,
-                      textAlign: TextAlign.right,
+                      textAlign:
+                          TextAlign.right,
                       style: TextStyle(
-                        color: row.key == 'Est. Queue No.'
+                        color: row.key ==
+                                'Est. Queue No.'
                             ? _primary
                             : _dark,
                         fontSize: 13,
                         height: 1.25,
-                        fontWeight: FontWeight.w700,
+                        fontWeight:
+                            FontWeight.w700,
                       ),
                     ),
                   ),
