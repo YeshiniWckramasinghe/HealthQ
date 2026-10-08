@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../theme/app_colors.dart';
 import '../common Screens/login_screen.dart';
 import 'opd_header_banner.dart';
@@ -56,6 +57,38 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     super.dispose();
   }
 
+  void _onLogout() {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out of the Nurse Portal?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(dialogCtx).pop();
+              await FirebaseAuth.instance.signOut();
+              if (!mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (route) => false,
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: OpdColors.primary400,
+              foregroundColor: OpdColors.white,
+            ),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -72,35 +105,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 : 'Staff Nurse',
             department: widget.department ?? 'General Medicine OPD',
             hospital: widget.hospital ?? 'Hospital',
-            onAvatarTap: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Sign Out'),
-                  content: const Text('Are you sure you want to sign out of the Nurse Portal?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(builder: (_) => const LoginScreen()),
-                          (route) => false,
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: OpdColors.primary400,
-                        foregroundColor: OpdColors.white,
-                      ),
-                      child: const Text('Sign Out'),
-                    ),
-                  ],
-                ),
-              );
-            },
+            onAvatarTap: _onLogout,
           ),
 
           // Main body content

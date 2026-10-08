@@ -102,19 +102,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // Update Firebase Auth profile display name
         await user.updateDisplayName('$firstName $lastName');
 
-        // Persist full patient record into Cloud Firestore
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        // User ID strictly defaults to NIC number
+        final userId = nic;
+
+        final userData = {
+          'userId': userId,
+          'nic': nic,
+          'patientId': userId,
+          'authUid': user.uid,
+          'uid': user.uid,
           'firstName': firstName,
           'lastName': lastName,
           'fullName': '$firstName $lastName',
           'dob': dob,
-          'nic': nic,
           'email': email,
           'contactNo': contact,
           'role': 'patient',
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
-        });
+        };
+
+        // Persist full patient record into Cloud Firestore users/{user.uid}
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .set(userData);
+
+        // Also persist under users/{userId} so lookup by User ID / NIC is instant
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .set(userData, SetOptions(merge: true));
       }
 
       if (mounted) {
@@ -250,7 +268,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return null;
                   },
                 ),
-                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 4, bottom: 2),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.info_outline,
+                          size: 13, color: AppColors.primary300),
+                      SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          'Your User ID will default to this NIC Number for appointments & medical records.',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.primary400,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 _formField(
                   controller: _emailController,
                   hint: 'Email (Gmail) *',

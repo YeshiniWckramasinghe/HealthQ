@@ -1,52 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import '../services/booking_service.dart';
-
-const Map<String, Map<String, List<String>>> _locations = {
-  'Western Province': {
-    'Colombo': ['Colombo', 'Dehiwala-Mount Lavinia', 'Sri Jayawardenepura Kotte', 'Moratuwa'],
-    'Gampaha': ['Gampaha', 'Negombo', 'Wattala', 'Ja-Ela', 'Katunayake', 'Minuwangoda'],
-    'Kalutara': ['Kalutara', 'Panadura', 'Beruwala', 'Horana'],
-  },
-  'Central Province': {
-    'Kandy': ['Kandy', 'Peradeniya', 'Katugastota'],
-    'Matale': ['Matale', 'Dambulla', 'Galewela'],
-    'Nuwara Eliya': ['Nuwara Eliya', 'Hatton', 'Talawakele'],
-  },
-  'Southern Province': {
-    'Galle': ['Galle', 'Hikkaduwa', 'Ambalangoda'],
-    'Matara': ['Matara', 'Weligama', 'Akuressa'],
-    'Hambantota': ['Hambantota', 'Tangalle', 'Tissamaharama'],
-  },
-  'Northern Province': {
-    'Jaffna': ['Jaffna', 'Chavakachcheri'],
-    'Kilinochchi': ['Kilinochchi'],
-    'Mannar': ['Mannar'],
-    'Mullaitivu': ['Mullaitivu'],
-    'Vavuniya': ['Vavuniya'],
-  },
-  'Eastern Province': {
-    'Batticaloa': ['Batticaloa', 'Eravur'],
-    'Ampara': ['Ampara', 'Kalmunai', 'Akkaraipattu'],
-    'Trincomalee': ['Trincomalee', 'Kinniya'],
-  },
-  'North Western Province': {
-    'Kurunegala': ['Kurunegala', 'Kuliyapitiya', 'Narammala'],
-    'Puttalam': ['Puttalam', 'Chilaw', 'Wennappuwa'],
-  },
-  'North Central Province': {
-    'Anuradhapura': ['Anuradhapura'],
-    'Polonnaruwa': ['Polonnaruwa', 'Hingurakgoda'],
-  },
-  'Uva Province': {
-    'Badulla': ['Badulla', 'Bandarawela', 'Haputale'],
-    'Monaragala': ['Monaragala', 'Wellawaya'],
-  },
-  'Sabaragamuwa Province': {
-    'Ratnapura': ['Ratnapura', 'Balangoda', 'Embilipitiya'],
-    'Kegalle': ['Kegalle', 'Mawanella', 'Warakapola'],
-  },
-};
+import 'find_hospital_screen.dart';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _sessions = {
@@ -65,16 +22,15 @@ class AppointmentsTab extends StatefulWidget {
 }
 
 class AppointmentsTabState extends State<AppointmentsTab> {
-  // 0 = hospital list, 1..3 = booking steps, 4 = history
-  int _step = 0;
+  // 0 = find hospital, 1 = book appointment (step 1/3), 2 = patient, 3 = confirm, 4 = history
+  int _step = 1;
 
   final _service = BookingService();
   List<Hospital> _hospitalList = [];
   List<Doctor> _doctorList = [];
-  bool _loadingHospitals = true;
-  String? _loadError;
   String? _hospitalId;
   bool _saving = false;
+  bool _loadingDoctors = false;
   int _confirmedQueue = 0;
   late final Stream<List<AppointmentRecord>> _historyStream =
       _service.myAppointments();
@@ -83,67 +39,136 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   void initState() {
     super.initState();
     _loadHospitals();
+    _loadDoctors();
+    _loadUserProfile();
   }
 
-  Future<void> _loadHospitals() async {
-    setState(() {
-      _loadingHospitals = true;
-      _loadError = null;
-    });
+  Future<void> _loadUserProfile() async {
     try {
-      final list = await _service.getHospitals();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
       if (!mounted) return;
+      final data = doc.data() ?? {};
+      final nic = (data['nic'] ?? data['userId'] ?? '').toString().trim();
+      final name =
+          (data['fullName'] ?? user.displayName ?? '').toString().trim();
+      final contact = (data['contactNo'] ??
+              data['contact'] ??
+              user.phoneNumber ??
+              '')
+          .toString()
+          .trim();
+      final dobStr = (data['dob'] ?? '').toString().trim();
+
       setState(() {
-        _hospitalList = list;
-        _loadingHospitals = false;
+        if (_nic.text.isEmpty && nic.isNotEmpty) {
+          _nic.text = nic;
+        }
+        if (_name.text.isEmpty && name.isNotEmpty) {
+          _name.text = name;
+        }
+        if (_contact.text.isEmpty && contact.isNotEmpty) {
+          _contact.text = contact;
+        }
+        if (_dob == null && dobStr.isNotEmpty) {
+          try {
+            if (dobStr.contains('/')) {
+              final p = dobStr.split('/');
+              if (p.length == 3) {
+                _dob = DateTime(
+                    int.parse(p[2]), int.parse(p[1]), int.parse(p[0]));
+              }
+            } else if (dobStr.contains('-')) {
+              _dob = DateTime.parse(dobStr);
+            }
+          } catch (_) {}
+        }
       });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loadError = 'Could not load hospitals';
-        _loadingHospitals = false;
-      });
+    } catch (e) {
+      debugPrint('Error loading patient profile in booking: $e');
     }
   }
 
-  Future<void> _loadDoctors() async {
-    final id = _hospitalId;
-    if (id == null) return;
+  Future<void> _loadHospitals() async {
     try {
-      final docs = await _service.getDoctors(id);
-      await _service.loadWaiting(id, docs, _dateIso, _session);
-      if (!mounted || id != _hospitalId) return;
-      setState(() => _doctorList = docs);
-    } catch (_) {
-      if (mounted) _snack('Could not load doctors');
+      final list = await _service.getHospitals();
+      if (!mounted) return;
+      setState(() => _hospitalList = list);
+    } catch (_) {}
+  }
+
+  Future<void> _loadDoctors() async {
+    if (!mounted) return;
+    setState(() => _loadingDoctors = true);
+    try {
+      final docs =
+          await _service.getDoctors(_hospitalId, hospitalName: _hospital);
+      await _service.loadWaiting(_hospitalId, docs, _dateIso, _session);
+      if (!mounted) return;
+      setState(() {
+        _doctorList = docs;
+        if (_doctorIdx != null && _doctorIdx! >= docs.length) {
+          _doctorIdx = null;
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading doctors: $e');
+      if (mounted) _snack('Could not load doctors from database');
+    } finally {
+      if (mounted) setState(() => _loadingDoctors = false);
     }
   }
 
   Future<void> _refreshWaiting() async {
-    final id = _hospitalId;
-    if (id == null || _doctorList.isEmpty) return;
+    if (_doctorList.isEmpty) return;
     try {
-      await _service.loadWaiting(id, _doctorList, _dateIso, _session);
+      await _service.loadWaiting(_hospitalId, _doctorList, _dateIso, _session);
       if (mounted) setState(() {});
     } catch (_) {}
   }
 
   Future<void> _confirmBooking() async {
     if (_saving) return;
-    final hid = _hospitalId;
     final di = _doctorIdx;
-    if (hid == null || di == null || _dob == null) return;
-    final hospital = _hospitalList.firstWhere((h) => h.id == hid);
+    if (di == null || _dob == null) return;
+    final doctor = _doctorList[di];
+
+    Hospital? hospital = _hospitalList
+        .where((h) => h.id == _hospitalId || h.name == _hospital)
+        .firstOrNull;
+    if (hospital == null) {
+      if (_hospital != null && _hospital!.isNotEmpty) {
+        hospital = Hospital(
+          id: _hospitalId ?? _hospital!.toLowerCase().replaceAll(' ', '_'),
+          name: _hospital!,
+          province: '',
+          district: '',
+          city: '',
+          status: 'open',
+          slotsLeft: 0,
+        );
+      } else {
+        _snack('Please select a hospital');
+        return;
+      }
+    }
+
     setState(() => _saving = true);
     try {
+      final cleanNic = _nic.text.trim().toUpperCase();
       final q = await _service.book(
         hospital: hospital,
-        doctor: _doctorList[di],
+        doctor: doctor,
         date: _dateIso,
         dateLabel: _dateLabel,
         session: _session,
         patientName: _name.text.trim(),
-        nic: _nic.text.trim().toUpperCase(),
+        nic: cleanNic,
+        userId: cleanNic, // User ID strictly defaults to NIC number
         dob: _dob!.toIso8601String().substring(0, 10),
         contact: _contact.text.trim(),
       );
@@ -157,9 +182,6 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     }
   }
 
-  // hospital filters
-  String? _province, _district, _city;
-  String _query = '';
 
   // booking selections
   String? _hospital;
@@ -224,19 +246,22 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m)));
 
-  void _resetBooking() => setState(() {
-        _hospital = null;
-        _hospitalId = null;
-        _doctorList = [];
-        _doctorIdx = null;
-        _doctorQuery = '';
-        _session = 'Morning';
-        _nic.clear();
-        _name.clear();
-        _contact.clear();
-        _dob = null;
-        _showErrors = false;
-      });
+  void _resetBooking() {
+    setState(() {
+      _hospital = null;
+      _hospitalId = null;
+      _doctorIdx = null;
+      _doctorQuery = '';
+      _session = 'Morning';
+      _nic.clear();
+      _name.clear();
+      _contact.clear();
+      _dob = null;
+      _showErrors = false;
+    });
+    _loadDoctors();
+    _loadUserProfile();
+  }
 
   Future<void> _pickDate() async {
     final now = DateTime.now();
@@ -252,6 +277,8 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     }
   }
 
+  bool _openedFromHome = false;
+
   void _go(int s) => setState(() => _step = s);
 
   /// Lets other tabs (e.g. Profile) jump straight to the history list.
@@ -259,17 +286,69 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   /// Steps back inside the booking flow. Returns false when already at the first screen.
   bool goBack() {
-    if (_step == 0) return false;
-    _go(_step == 4 ? 0 : _step - 1);
+    if (_step == 0) {
+      if (_openedFromHome) {
+        widget.onBackToHome?.call();
+        return true;
+      }
+      _go(1);
+      return true;
+    }
+    if (_step == 1) return false;
+    _go(_step == 4 ? 1 : _step - 1);
     return true;
+  }
+
+  /// Direct action: Opens the Book Appointment page (step 1/3)
+  void openBookAppointment() {
+    setState(() {
+      _openedFromHome = false;
+      _step = 1;
+    });
+  }
+
+  /// Direct action: Opens the Find Hospital page (step 0)
+  void openFindHospital() {
+    setState(() {
+      _openedFromHome = true;
+      _step = 0;
+    });
+  }
+
+  /// Reset to hospital selection list (step 0), optionally with a pre-selected hospital
+  void resetToHospitalList([String? hospitalId]) {
+    setState(() {
+      _step = 0;
+      if (hospitalId != null) {
+        _hospitalId = hospitalId;
+        final match = _hospitalList.where((h) => h.id == hospitalId).firstOrNull;
+        if (match != null) {
+          _hospital = match.name;
+        }
+      }
+    });
+  }
+
+  /// Select a hospital and proceed directly to doctor/slot selection (step 1)
+  void selectHospitalAndProceed(Hospital hospital) {
+    setState(() {
+      _hospital = hospital.name;
+      _hospitalId = hospital.id;
+      _doctorList = [];
+      _doctorIdx = null;
+      _step = 1;
+    });
+    _loadDoctors();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_step == 0) {
+      return _hospitals();
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: switch (_step) {
-        0 => _hospitals(),
         1 => _details(),
         2 => _patient(),
         3 => _confirm(),
@@ -278,206 +357,246 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     );
   }
 
-  // ---------- Screen 2: hospital list ----------
-  bool _matches(Hospital h) =>
-      (_province == null || h.province == _province) &&
-      (_district == null || h.district == _district) &&
-      (_city == null || h.city == _city) &&
-      h.name.toLowerCase().contains(_query.trim().toLowerCase());
-
-  /// Applies a filter/search change and drops the selected hospital
-  /// if it no longer matches the filters.
-  void _changeFilter(VoidCallback change) {
-    setState(() {
-      change();
-      final id = _hospitalId;
-      if (id != null && !_hospitalList.any((h) => h.id == id && _matches(h))) {
-        _hospital = null;
-        _hospitalId = null;
-        _doctorList = [];
-        _doctorIdx = null;
-      }
-    });
-  }
-
+  // ---------- Screen 2: hospital list (Find Hospital wireframe) ----------
   Widget _hospitals() {
-    final list = _hospitalList.where(_matches).toList();
-    final districts = _locations[_province]?.keys.toList() ?? <String>[];
-    final cities = _locations[_province]?[_district] ?? <String>[];
-
-    return Column(
-      children: [
-        Expanded(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              _header('Appointment Booking'),
-              const SizedBox(height: 12),
-              _search((v) => _changeFilter(() => _query = v)),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  _label('HOSPITAL DETAILS'),
-                  const Spacer(),
-                  if (_province != null)
-                    GestureDetector(
-                      onTap: () => _changeFilter(() {
-                        _province = null;
-                        _district = null;
-                        _city = null;
-                      }),
-                      child: const Text('Clear',
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary300)),
-                    ),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: _drop(
-                      hint: 'Province',
-                      value: _province,
-                      items: _locations.keys.toList(),
-                      onChanged: (v) => _changeFilter(() {
-                        _province = v;
-                        _district = null;
-                        _city = null;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _drop(
-                      hint: 'District',
-                      value: _district,
-                      items: districts,
-                      onChanged: (v) => _changeFilter(() {
-                        _district = v;
-                        _city = null;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _drop(
-                      hint: 'City',
-                      value: _city,
-                      items: cities,
-                      onChanged: (v) => _changeFilter(() => _city = v),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _label('HOSPITAL AVAILABILITY'),
-              if (_loadingHospitals)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_loadError != null)
-                Center(
-                  child: TextButton(
-                    onPressed: _loadHospitals,
-                    child: Text('$_loadError. Tap to retry'),
-                  ),
-                )
-              else if (list.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(
-                    child: Text('No hospitals found',
-                        style:
-                            TextStyle(fontSize: 12, color: AppColors.gray400)),
-                  ),
-                )
-              else
-                for (final h in list)
-                  _card(
-                    selected: _hospitalId == h.id,
-                    onTap: () {
-                      if (h.isFull) {
-                        _snack('This hospital OPD is full');
-                        return;
-                      }
-                      setState(() {
-                        _hospital = h.name;
-                        _hospitalId = h.id;
-                        _doctorList = [];
-                        _doctorIdx = null;
-                      });
-                      _loadDoctors();
-                    },
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary100,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Icon(Icons.local_hospital_outlined,
-                              size: 16, color: AppColors.primary300),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(h.name,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary500)),
-                              Row(
-                                children: [
-                                  Icon(Icons.circle, size: 8, color: h.color),
-                                  const SizedBox(width: 4),
-                                  Text(h.label,
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.gray400)),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(
-                          _hospitalId == h.id
-                              ? Icons.check_circle
-                              : Icons.chevron_right,
-                          color: _hospitalId == h.id
-                              ? AppColors.primary300
-                              : AppColors.gray400,
-                        ),
-                      ],
-                    ),
-                  ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        _primaryBtn('Book Appointment', () {
-          if (_hospital == null) {
-            _snack('Please select a hospital');
-            return;
-          }
+    return FindHospitalScreen(
+      isStandalone: false,
+      initialHospitalId: _hospitalId,
+      onBack: () {
+        if (_openedFromHome) {
+          widget.onBackToHome?.call();
+        } else {
           _go(1);
-        }),
-      ],
+        }
+      },
+      onBookAppointment: (hospital) {
+        selectHospitalAndProceed(hospital);
+      },
     );
   }
 
+  void _showHospitalPicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        String filter = '';
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final filtered = _hospitalList.where((h) {
+              if (filter.trim().isEmpty) return true;
+              final q = filter.trim().toLowerCase();
+              return h.name.toLowerCase().contains(q) ||
+                  h.city.toLowerCase().contains(q) ||
+                  h.district.toLowerCase().contains(q);
+            }).toList();
+
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.65,
+              minChildSize: 0.35,
+              maxChildSize: 0.9,
+              builder: (_, scrollController) {
+                return Column(
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 10, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Select Hospital',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary500,
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _go(0);
+                            },
+                            icon: const Icon(Icons.tune,
+                                size: 16, color: AppColors.primary300),
+                            label: const Text(
+                              'Find Hospital',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.primary300,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextField(
+                        onChanged: (v) => setSheetState(() => filter = v),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: 'Search clinic, hospital...',
+                          hintStyle: const TextStyle(
+                              fontSize: 12, color: AppColors.gray400),
+                          prefixIcon: const Icon(Icons.search,
+                              size: 18, color: AppColors.primary300),
+                          filled: true,
+                          fillColor: AppColors.primary100,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(
+                              child: Text('No hospitals found',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.gray400)),
+                            )
+                          : ListView.separated(
+                              controller: scrollController,
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, _) => const Divider(
+                                  height: 1, indent: 16, endIndent: 16),
+                              itemBuilder: (context, index) {
+                                final h = filtered[index];
+                                final isSelected = h.id == _hospitalId;
+                                return ListTile(
+                                  leading: Container(
+                                    width: 38,
+                                    height: 38,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary100,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(
+                                      Icons.local_hospital_rounded,
+                                      size: 20,
+                                      color: AppColors.primary300,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    h.name,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.w600,
+                                      color: AppColors.primary500,
+                                    ),
+                                  ),
+                                  subtitle: Row(
+                                    children: [
+                                      if (h.identificationNo.isNotEmpty) ...[
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 5, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primary100,
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            'Code: ${h.identificationNo}',
+                                            style: const TextStyle(
+                                              fontSize: 9.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppColors.primary400,
+                                              letterSpacing: 0.3,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                      ],
+                                      if (h.city.isNotEmpty) ...[
+                                        Text(h.city,
+                                            style: const TextStyle(
+                                                fontSize: 11,
+                                                color: AppColors.gray400)),
+                                        const Text(' · ',
+                                            style: TextStyle(
+                                                color: AppColors.gray400)),
+                                      ],
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: h.color,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        h.label,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: h.color,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  trailing: isSelected
+                                      ? const Icon(Icons.check_circle,
+                                          color: AppColors.primary300)
+                                      : const Icon(Icons.chevron_right,
+                                          size: 18,
+                                          color: AppColors.gray400),
+                                  onTap: () {
+                                    if (h.isFull) {
+                                      _snack('${h.name} OPD is currently full.');
+                                      return;
+                                    }
+                                    Navigator.pop(ctx);
+                                    selectHospitalAndProceed(h);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ---------- Screen 3: step 1 ----------
   // ---------- Screen 3: step 1 ----------
   Widget _details() {
     final q = _doctorQuery.trim().toLowerCase();
     final docs = [
       for (var i = 0; i < _doctorList.length; i++)
-        if (_doctorList[i].name.toLowerCase().contains(q) ||
-            _doctorList[i].speciality.toLowerCase().contains(q))
+        if (q.isEmpty ||
+            _doctorList[i].name.toLowerCase().contains(q) ||
+            _doctorList[i].speciality.toLowerCase().contains(q) ||
+            _doctorList[i].hospital.toLowerCase().contains(q))
           i,
     ];
     return Column(
@@ -493,7 +612,123 @@ class AppointmentsTabState extends State<AppointmentsTab> {
               const SizedBox(height: 14),
               _label('APPOINTMENT DETAILS'),
               _field(_hospital ?? 'Select hospital',
-                  trailing: Icons.keyboard_arrow_down, onTap: () => _go(0)),
+                  trailing: Icons.keyboard_arrow_down,
+                  onTap: _showHospitalPicker),
+              if (_hospital != null && _hospital!.isNotEmpty) ...[
+                Builder(
+                  builder: (context) {
+                    final hMatch = _hospitalList
+                        .where((h) => h.id == _hospitalId || h.name == _hospital)
+                        .firstOrNull;
+                    return Container(
+                      margin: const EdgeInsets.only(top: 4, bottom: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: AppColors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppColors.primary300.withValues(alpha: 0.4),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F2F1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.local_hospital_rounded,
+                                size: 16, color: Color(0xFF007A78)),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      _hospital!,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primary500,
+                                      ),
+                                    ),
+                                    if (hMatch != null &&
+                                        hMatch.identificationNo.isNotEmpty) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary100,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          hMatch.identificationNo,
+                                          style: const TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.primary400,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                if (hMatch != null &&
+                                    (hMatch.city.isNotEmpty ||
+                                        hMatch.province.isNotEmpty))
+                                  Text(
+                                    '${hMatch.city.isNotEmpty ? "${hMatch.city}, " : ""}${hMatch.province}',
+                                    style: const TextStyle(
+                                        fontSize: 10, color: AppColors.gray400),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          if (hMatch != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: hMatch.color.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: hMatch.color,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    hMatch.label,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: hMatch.color,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
               const SizedBox(height: 8),
               _field(_dateLabel,
                   leading: Icons.calendar_today_outlined, onTap: _pickDate),
@@ -509,70 +744,273 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                 bordered: true,
               ),
               const SizedBox(height: 14),
-              _label('DOCTOR AVAILABILITY & QUEUE'),
-              if (docs.isEmpty)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _label('DOCTOR AVAILABILITY & QUEUE'),
+                  if (_doctorList.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary100,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${docs.length} Available',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary300,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              if (_loadingDoctors)
                 const Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                    child: Text('No doctors found',
-                        style:
-                            TextStyle(fontSize: 12, color: AppColors.gray400)),
-                  ),
-                )
-              else
-                for (final i in docs)
-                  _card(
-                    selected: _doctorIdx == i,
-                    onTap: () => setState(() => _doctorIdx = i),
                     child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(_doctorList[i].name,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary500)),
-                              Text(_doctorList[i].speciality,
-                                  style: const TextStyle(
-                                      fontSize: 11, color: AppColors.gray400)),
-                            ],
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.primary300,
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary100,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text('${_doctorList[i].waiting} waiting',
-                              style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.primary400)),
-                        ),
+                        SizedBox(width: 10),
+                        Text('Loading registered doctors...',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.gray400)),
                       ],
                     ),
                   ),
+                )
+              else if (docs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        const Icon(Icons.person_search_outlined,
+                            size: 36, color: AppColors.gray400),
+                        const SizedBox(height: 8),
+                        Text(
+                          _doctorQuery.isNotEmpty
+                              ? 'No doctors matching "$_doctorQuery"'
+                              : 'No registered doctors found in database',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.gray400),
+                        ),
+                        if (_hospital != null) ...[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _hospital = null;
+                                _hospitalId = null;
+                              });
+                              _loadDoctors();
+                            },
+                            child: const Text('Show all hospital doctors',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.primary300)),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                )
+              else
+                for (final i in docs) _buildDoctorCard(i),
             ],
           ),
         ),
         const SizedBox(height: 8),
         _primaryBtn('Next', () {
-          if (_hospital == null) {
-            _snack('Please select a hospital');
-            return;
-          }
           if (_doctorIdx == null) {
             _snack('Please select a doctor');
+            return;
+          }
+          if (_hospital == null || _hospital!.isEmpty) {
+            _snack('Please select a hospital');
             return;
           }
           _go(2);
         }),
       ],
+    );
+  }
+
+  Widget _buildDoctorCard(int i) {
+    final doc = _doctorList[i];
+    final isSelected = _doctorIdx == i;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: _card(
+        selected: isSelected,
+        onTap: () {
+          setState(() {
+            _doctorIdx = i;
+            // Auto-select doctor's hospital if user hasn't chosen a hospital yet
+            if (_hospital == null && doc.hospital.isNotEmpty) {
+              final match = _hospitalList
+                  .where((h) =>
+                      h.name.toLowerCase() == doc.hospital.toLowerCase() ||
+                      h.id.toLowerCase() == doc.hospital.toLowerCase())
+                  .firstOrNull;
+              if (match != null) {
+                _hospital = match.name;
+                _hospitalId = match.id;
+              } else {
+                _hospital = doc.hospital;
+              }
+            }
+          });
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppColors.primary300
+                    : AppColors.primary100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.medical_services_rounded,
+                size: 22,
+                color: isSelected ? Colors.white : AppColors.primary300,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    doc.name,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isSelected
+                          ? AppColors.primary300
+                          : AppColors.primary500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    doc.speciality,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.gray400,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if ((doc.room != null && doc.room!.isNotEmpty) ||
+                      doc.hospital.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (doc.room != null && doc.room!.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary100.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.meeting_room_outlined,
+                                    size: 10, color: AppColors.primary300),
+                                const SizedBox(width: 3),
+                                Text(
+                                  doc.room!,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: AppColors.primary500,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (_hospital == null && doc.hospital.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.local_hospital_outlined,
+                                    size: 10, color: AppColors.gray400),
+                                const SizedBox(width: 3),
+                                Text(
+                                  doc.hospital,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: AppColors.gray400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppColors.primary300
+                        : AppColors.primary100,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${doc.waiting} waiting',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color:
+                          isSelected ? Colors.white : AppColors.primary400,
+                    ),
+                  ),
+                ),
+                if (isSelected) ...[
+                  const SizedBox(height: 4),
+                  const Icon(Icons.check_circle,
+                      size: 16, color: AppColors.primary300),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -604,7 +1042,55 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                 ),
                 const SizedBox(height: 14),
                 _label('PATIENT DETAILS'),
-                _input('NIC number', _nic, _nicError),
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary100,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: AppColors.primary300.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.badge_outlined,
+                          size: 22, color: AppColors.primary300),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('PATIENT USER ID (DEFAULTED TO NIC)',
+                                style: TextStyle(
+                                    fontSize: 9,
+                                    color: AppColors.gray400,
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            Text(
+                              _nic.text.trim().isNotEmpty
+                                  ? _nic.text.trim().toUpperCase()
+                                  : 'Auto-assigned from NIC number below',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: _nic.text.trim().isNotEmpty
+                                    ? AppColors.primary500
+                                    : AppColors.gray400,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _input(
+                  'NIC Number (User ID) *',
+                  _nic,
+                  _nicError,
+                  onChanged: (_) => setState(() {}),
+                ),
                 const SizedBox(height: 8),
                 _input('Full name', _name, _nameError),
                 const SizedBox(height: 8),
@@ -634,6 +1120,9 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Screen 5: step 3 ----------
   Widget _confirm() {
+    final hMatch = _hospitalList
+        .where((h) => h.id == _hospitalId || h.name == _hospital)
+        .firstOrNull;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -649,11 +1138,19 @@ class AppointmentsTabState extends State<AppointmentsTab> {
           child: Column(
             children: [
               _row('Hospital', _hospital ?? '-'),
+              if (hMatch != null && hMatch.identificationNo.isNotEmpty)
+                _row('Hospital ID', hMatch.identificationNo),
               _row('Date', _dateIso),
               _row('Session', '$_session (${_sessions[_session]})'),
               _row('Doctor', _doctorList[_doctorIdx ?? 0].name),
               _row('Speciality', _doctorList[_doctorIdx ?? 0].speciality),
-              _row('Patient', _name.text.trim()),
+              if (_doctorIdx != null &&
+                  _doctorList[_doctorIdx!].room != null &&
+                  _doctorList[_doctorIdx!].room!.isNotEmpty)
+                _row('Room', _doctorList[_doctorIdx!].room!),
+              _row('Patient User ID', _nic.text.trim().toUpperCase(),
+                  highlight: true),
+              _row('Patient Name', _name.text.trim()),
               _row('NIC', _nic.text.trim().toUpperCase()),
               _row('Contact', _contact.text.trim()),
               _row('Est. Queue No.', _queueNo, highlight: true),
@@ -670,11 +1167,18 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Confirmed (full screen, no bottom nav) ----------
   void _showConfirmed() {
+    final hMatch = _hospitalList
+        .where((h) => h.id == _hospitalId || h.name == _hospital)
+        .firstOrNull;
+    final hidText = (hMatch != null && hMatch.identificationNo.isNotEmpty)
+        ? ' [${hMatch.identificationNo}]'
+        : '';
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _ConfirmedScreen(
           queue: '#${_two(_confirmedQueue)}',
-          summary: '${_hospital ?? ''} · $_dateLabel',
+          summary:
+              '${_hospital ?? ''}$hidText · $_dateLabel\nPatient User ID: ${_nic.text.trim().toUpperCase()}',
           onViewAppointments: () {
             Navigator.of(context).pop();
             _resetBooking();
@@ -738,6 +1242,25 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                                         fontWeight: FontWeight.bold,
                                         color: AppColors.primary500)),
                               ),
+                              if (a.hospitalIdentificationNo.isNotEmpty) ...[
+                                Container(
+                                  margin: const EdgeInsets.only(right: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary100,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    a.hospitalIdentificationNo,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary400,
+                                    ),
+                                  ),
+                                ),
+                              ],
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 3),
@@ -753,7 +1276,29 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                               ),
                             ],
                           ),
-                          const Divider(height: 20),
+                          if (a.userId.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary100,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Patient User ID: ${a.userId}',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primary400,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          const Divider(height: 16),
                           Row(
                             children: [
                               Expanded(
@@ -923,12 +1468,13 @@ class AppointmentsTabState extends State<AppointmentsTab> {
       );
 
   Widget _input(String hint, TextEditingController controller, String? error,
-          {TextInputType? keyboard}) =>
+          {TextInputType? keyboard, ValueChanged<String>? onChanged}) =>
       TextField(
         controller: controller,
         keyboardType: keyboard,
         style: const TextStyle(fontSize: 12),
-        onChanged: (_) {
+        onChanged: (v) {
+          onChanged?.call(v);
           if (_showErrors) setState(() {});
         },
         decoration: InputDecoration(
