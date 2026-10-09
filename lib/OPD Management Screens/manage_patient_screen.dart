@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'opd_bottom_nav.dart';
+import 'patient_inquiry_screen.dart';
 
 class ManagePatientScreen extends StatefulWidget {
   final String? searchNic;
+  final String? hospital;
+  final String? hospitalCode;
 
   const ManagePatientScreen({
     super.key,
     this.searchNic,
+    this.hospital,
+    this.hospitalCode,
   });
 
   @override
@@ -26,20 +33,27 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
 
   String _gender = 'Male';
   bool _isEditing = false;
+  bool _isLoading = false;
+  String? _loadedDocId;
 
   @override
   void initState() {
     super.initState();
-    _searchController =
-        TextEditingController(text: widget.searchNic ?? '952345678V');
-    _firstNameController = TextEditingController(text: 'Suresh');
-    _lastNameController = TextEditingController(text: 'Jayawardena');
-    _dobController = TextEditingController(text: '14/05/1995');
-    _nicController = TextEditingController(text: '952345678V');
-    _addressController =
-        TextEditingController(text: 'No. 45, Galle Road, Colombo 03.');
-    _emailController = TextEditingController(text: 'suresh.j@gmail.com');
-    _contactController = TextEditingController(text: '071-234-5678');
+    final initialNic = widget.searchNic?.trim() ?? '';
+    _searchController = TextEditingController(text: initialNic);
+    _firstNameController = TextEditingController();
+    _lastNameController = TextEditingController();
+    _dobController = TextEditingController();
+    _nicController = TextEditingController(text: initialNic);
+    _addressController = TextEditingController();
+    _emailController = TextEditingController();
+    _contactController = TextEditingController();
+
+    if (initialNic.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _searchPatient(initialNic);
+      });
+    }
   }
 
   @override
@@ -53,6 +67,176 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
     _emailController.dispose();
     _contactController.dispose();
     super.dispose();
+  }
+
+  Future<void> _searchPatient([String? query]) async {
+    final term = (query ?? _searchController.text).trim().toUpperCase();
+    if (term.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orange,
+          content: Text('Please enter an NIC or User ID to search'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      if (FirebaseAuth.instance.currentUser == null) {
+        try {
+          await FirebaseAuth.instance.signInAnonymously();
+        } catch (_) {}
+      }
+
+      DocumentSnapshot<Map<String, dynamic>>? foundDoc;
+
+      // 1. Check direct doc users/{term}
+      final directDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(term)
+          .get();
+      if (directDoc.exists && directDoc.data() != null) {
+        foundDoc = directDoc;
+      }
+
+      // 2. Query where userId == term
+      if (foundDoc == null) {
+        final qUser = await FirebaseFirestore.instance
+            .collection('users')
+            .where('userId', isEqualTo: term)
+            .limit(1)
+            .get();
+        if (qUser.docs.isNotEmpty) {
+          foundDoc = qUser.docs.first;
+        }
+      }
+
+      // 3. Query where nic == term
+      if (foundDoc == null) {
+        final qNic = await FirebaseFirestore.instance
+            .collection('users')
+            .where('nic', isEqualTo: term)
+            .limit(1)
+            .get();
+        if (qNic.docs.isNotEmpty) {
+          foundDoc = qNic.docs.first;
+        }
+      }
+
+      // 4. Query contactNo or contact
+      if (foundDoc == null) {
+        final qPhone1 = await FirebaseFirestore.instance
+            .collection('users')
+            .where('contactNo', isEqualTo: term)
+            .limit(1)
+            .get();
+        if (qPhone1.docs.isNotEmpty) {
+          foundDoc = qPhone1.docs.first;
+        } else {
+          final qPhone2 = await FirebaseFirestore.instance
+              .collection('users')
+              .where('contact', isEqualTo: term)
+              .limit(1)
+              .get();
+          if (qPhone2.docs.isNotEmpty) {
+            foundDoc = qPhone2.docs.first;
+          }
+        }
+      }
+
+      // 5. Query email
+      if (foundDoc == null) {
+        final qEmail = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: term.toLowerCase())
+            .limit(1)
+            .get();
+        if (qEmail.docs.isNotEmpty) {
+          foundDoc = qEmail.docs.first;
+        }
+      }
+
+      // 6. Name match fallback from recent patients
+      if (foundDoc == null) {
+        final recent = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'patient')
+            .limit(40)
+            .get();
+        final match = recent.docs.where((doc) {
+          final m = doc.data();
+          final fn = (m['fullName'] ?? m['name'] ?? '').toString().toLowerCase();
+          return fn.contains(term.toLowerCase());
+        }).toList();
+        if (match.isNotEmpty) {
+          foundDoc = match.first;
+        }
+      }
+
+      if (foundDoc != null && foundDoc.data() != null) {
+        final d = foundDoc.data()!;
+        _loadedDocId = foundDoc.id;
+
+        final fullName = (d['fullName'] ?? d['name'] ?? '').toString();
+        final firstName = (d['firstName'] ?? '').toString();
+        final lastName = (d['lastName'] ?? '').toString();
+
+        if (firstName.isNotEmpty) {
+          _firstNameController.text = firstName;
+          _lastNameController.text = lastName;
+        } else if (fullName.isNotEmpty) {
+          final parts = fullName.split(' ');
+          _firstNameController.text = parts.first;
+          _lastNameController.text =
+              parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        } else {
+          _firstNameController.text = '';
+          _lastNameController.text = '';
+        }
+
+        final resolvedNic = (d['nic'] ?? d['userId'] ?? term).toString();
+        _nicController.text = resolvedNic;
+        _searchController.text = resolvedNic;
+        _dobController.text = (d['dob'] ?? '').toString();
+        _addressController.text = (d['address'] ?? '').toString();
+        _emailController.text = (d['email'] ?? '').toString();
+        _contactController.text =
+            (d['contactNo'] ?? d['contact'] ?? d['phone'] ?? '').toString();
+
+        final g = (d['gender'] ?? 'Male').toString();
+        _gender = ['Male', 'Female', 'Other'].contains(g) ? g : 'Male';
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: OpdColors.primary400,
+              content: Text('Patient found: ${_firstNameController.text} (User ID: $resolvedNic)'),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.orange.shade800,
+              content: Text('No patient found for User ID / NIC: $term'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red.shade700,
+            content: Text('Search failed: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _selectDate() async {
@@ -83,14 +267,85 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
     }
   }
 
-  void _saveRecord() {
-    setState(() => _isEditing = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: OpdColors.primary400,
-        content: Text('Patient record updated successfully!'),
-      ),
-    );
+  Future<void> _saveRecord() async {
+    final nic = _nicController.text.trim().toUpperCase();
+    if (nic.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('NIC / User ID cannot be empty'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final docId = _loadedDocId ?? nic;
+      final fName = _firstNameController.text.trim();
+      final lName = _lastNameController.text.trim();
+      final fullName = ('$fName $lName').trim();
+
+      final patientData = {
+        'userId': nic,
+        'patientId': nic,
+        'nic': nic,
+        'firstName': fName,
+        'lastName': lName,
+        'fullName': fullName.isNotEmpty ? fullName : nic,
+        'name': fullName.isNotEmpty ? fullName : nic,
+        'dob': _dobController.text.trim(),
+        'gender': _gender,
+        'address': _addressController.text.trim(),
+        'email': _emailController.text.trim(),
+        'contactNo': _contactController.text.trim(),
+        'contact': _contactController.text.trim(),
+        'role': 'patient',
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (FirebaseAuth.instance.currentUser == null) {
+        try {
+          await FirebaseAuth.instance.signInAnonymously();
+        } catch (_) {}
+      }
+
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(
+        FirebaseFirestore.instance.collection('users').doc(docId),
+        patientData,
+        SetOptions(merge: true),
+      );
+      if (docId != nic) {
+        batch.set(
+          FirebaseFirestore.instance.collection('users').doc(nic),
+          patientData,
+          SetOptions(merge: true),
+        );
+      }
+      await batch.commit();
+
+      setState(() => _isEditing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: OpdColors.primary400,
+            content: Text('Patient record (User ID: $nic) updated successfully!'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red,
+            content: Text('Failed to update record: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -124,12 +379,39 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'View Patient Inquiry & History',
+            icon: const Icon(Icons.manage_search, color: OpdColors.white),
+            onPressed: () {
+              final term = _nicController.text.trim().isNotEmpty
+                  ? _nicController.text.trim()
+                  : _searchController.text.trim();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PatientInquiryScreen(
+                    initialQuery: term.isNotEmpty ? term : null,
+                    hospital: widget.hospital,
+                    hospitalCode: widget.hospitalCode,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (_isLoading) ...[
+              const LinearProgressIndicator(
+                backgroundColor: OpdColors.primary200,
+                valueColor: AlwaysStoppedAnimation<Color>(OpdColors.primary400),
+              ),
+              const SizedBox(height: 12),
+            ],
             // Search / NIC Lookup bar
             Container(
               decoration: BoxDecoration(
@@ -142,19 +424,31 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
               ),
               child: TextField(
                 controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (val) => _searchPatient(val),
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: OpdColors.primary500,
                 ),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(
                     Icons.search,
                     size: 20,
                     color: OpdColors.primary300,
                   ),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.arrow_forward, color: OpdColors.primary400, size: 20),
+                    onPressed: () => _searchPatient(_searchController.text),
+                    tooltip: 'Search by User ID / NIC',
+                  ),
+                  hintText: 'Search by User ID / NIC No...',
+                  hintStyle: const TextStyle(
+                    fontSize: 12,
+                    color: OpdColors.textMuted,
+                  ),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
+                  contentPadding: const EdgeInsets.symmetric(
                     vertical: 11,
                     horizontal: 14,
                   ),
@@ -242,7 +536,7 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
             const SizedBox(height: 10),
 
             _buildField(
-              label: 'NIC NO',
+              label: 'NIC NO / USER ID',
               controller: _nicController,
               enabled: _isEditing,
             ),
@@ -357,11 +651,53 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
                 ),
               ],
             ),
+            if (_loadedDocId != null || _nicController.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.manage_search, size: 20, color: OpdColors.primary400),
+                  label: const Text(
+                    'View Patient Inquiry & History',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: OpdColors.primary400,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: OpdColors.primary300, width: 1.2),
+                    backgroundColor: OpdColors.primary100,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
+                  onPressed: () {
+                    final term = _nicController.text.trim().isNotEmpty
+                        ? _nicController.text.trim()
+                        : _searchController.text.trim();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PatientInquiryScreen(
+                          initialQuery: term.isNotEmpty ? term : null,
+                          hospital: widget.hospital,
+                          hospitalCode: widget.hospitalCode,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
           ],
         ),
       ),
-      bottomNavigationBar: const OpdBottomNav(currentIndex: 0),
+      bottomNavigationBar: OpdBottomNav(
+        currentIndex: 0,
+        hospital: widget.hospital,
+      ),
     );
   }
 

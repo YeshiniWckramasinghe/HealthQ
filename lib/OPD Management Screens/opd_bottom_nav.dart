@@ -1,33 +1,73 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../services/staff_auth_service.dart';
 import 'home_dashboard_screen.dart';
 import 'appointments_list_screen.dart';
 
 class OpdBottomNav extends StatelessWidget {
   final int currentIndex;
+  final String? hospital;
+  final String? nurseId;
+  final String? nurseName;
+  final String? department;
 
   const OpdBottomNav({
     super.key,
     required this.currentIndex,
+    this.hospital,
+    this.nurseId,
+    this.nurseName,
+    this.department,
   });
 
   void _onTap(BuildContext context, int index) {
-    if (index == currentIndex) return;
+    if (index == currentIndex) {
+      if (index == 0 && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
+    final effectiveHospital = (hospital != null && hospital!.trim().isNotEmpty)
+        ? hospital!.trim()
+        : StaffAuthService.instance.currentStaff?.hospital;
+    final effectiveNurseId = (nurseId != null && nurseId!.trim().isNotEmpty)
+        ? nurseId!.trim()
+        : StaffAuthService.instance.currentStaff?.staffId;
+    final effectiveNurseName = (nurseName != null && nurseName!.trim().isNotEmpty)
+        ? nurseName!.trim()
+        : StaffAuthService.instance.currentStaff?.name;
+    final effectiveDept = (department != null && department!.trim().isNotEmpty)
+        ? department!.trim()
+        : StaffAuthService.instance.currentStaff?.department;
 
     if (index == 0) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeDashboardScreen()),
+        MaterialPageRoute(
+          builder: (_) => HomeDashboardScreen(
+            hospital: effectiveHospital,
+            nurseId: effectiveNurseId,
+            nurseName: effectiveNurseName,
+            department: effectiveDept,
+          ),
+        ),
         (route) => route.isFirst,
       );
     } else if (index == 1) {
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AppointmentsListScreen()),
+        MaterialPageRoute(
+          builder: (_) => AppointmentsListScreen(
+            hospital: effectiveHospital,
+          ),
+        ),
       );
     } else if (index == 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Queue Management module'),
-          duration: Duration(seconds: 1),
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AppointmentsListScreen(
+            initialQueueTab: true,
+            hospital: effectiveHospital,
+          ),
         ),
       );
     } else if (index == 3) {

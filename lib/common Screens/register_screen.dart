@@ -6,7 +6,14 @@ import 'verification_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  final String? initialEmail;
+  final String? initialNic;
+
+  const RegisterScreen({
+    super.key,
+    this.initialEmail,
+    this.initialNic,
+  });
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -27,8 +34,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscureConfirm = true;
   bool _isLoading = false;
 
+  // OPD Duplicate Detection & Existing Record State
+  Map<String, dynamic>? _existingOpdRecord;
+  bool _isCheckingOpd = false;
+  bool _alreadyHasAccount = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialNic != null && widget.initialNic!.isNotEmpty) {
+      _nicController.text = widget.initialNic!;
+      _checkExistingOpdRecord(widget.initialNic!);
+    } else if (widget.initialEmail != null && widget.initialEmail!.isNotEmpty) {
+      _emailController.text = widget.initialEmail!;
+      _checkExistingOpdByEmail(widget.initialEmail!);
+    }
+
+    _nicController.addListener(_onNicChanged);
+  }
+
   @override
   void dispose() {
+    _nicController.removeListener(_onNicChanged);
     _firstNameController.dispose();
     _lastNameController.dispose();
     _dobController.dispose();
@@ -38,6 +65,141 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  void _onNicChanged() {
+    final text = _nicController.text.trim().toUpperCase();
+    if (text.length == 10 || text.length == 12) {
+      _checkExistingOpdRecord(text);
+    } else if (text.length < 9 && _existingOpdRecord != null) {
+      setState(() {
+        _existingOpdRecord = null;
+        _alreadyHasAccount = false;
+      });
+    }
+  }
+
+  Future<void> _checkExistingOpdRecord(String nic) async {
+    final cleanNic = nic.trim().toUpperCase();
+    if (cleanNic.length < 9) return;
+    setState(() => _isCheckingOpd = true);
+    try {
+      DocumentSnapshot<Map<String, dynamic>>? doc =
+          await FirebaseFirestore.instance.collection('users').doc(cleanNic).get();
+
+      Map<String, dynamic>? data = doc.exists ? doc.data() : null;
+
+      if (data == null) {
+        final q = await FirebaseFirestore.instance
+            .collection('users')
+            .where('nic', isEqualTo: cleanNic)
+            .limit(1)
+            .get();
+        if (q.docs.isNotEmpty) {
+          data = q.docs.first.data();
+        }
+      }
+
+      if (data != null && mounted) {
+        final bool isAuthLinked = data['authLinked'] == true ||
+            (data['authUid'] != null &&
+                data['authUid'].toString().isNotEmpty &&
+                data['isRegisteredByStaff'] != true);
+
+        if (isAuthLinked) {
+          setState(() {
+            _existingOpdRecord = null;
+            _alreadyHasAccount = true;
+          });
+        } else {
+          // Found hospital OPD record! Pre-fill details so user does not need to retype
+          setState(() {
+            _existingOpdRecord = data;
+            _alreadyHasAccount = false;
+
+            if (_firstNameController.text.isEmpty && data?['firstName'] != null) {
+              _firstNameController.text = data!['firstName'].toString();
+            }
+            if (_lastNameController.text.isEmpty && data?['lastName'] != null) {
+              _lastNameController.text = data!['lastName'].toString();
+            }
+            if (_dobController.text.isEmpty && data?['dob'] != null) {
+              _dobController.text = data!['dob'].toString();
+            }
+            if (_contactController.text.isEmpty &&
+                (data?['contactNo'] != null || data?['contact'] != null)) {
+              _contactController.text =
+                  (data!['contactNo'] ?? data['contact']).toString();
+            }
+            if (_emailController.text.isEmpty && data?['email'] != null) {
+              _emailController.text = data!['email'].toString();
+            }
+          });
+        }
+      } else if (mounted) {
+        setState(() {
+          _existingOpdRecord = null;
+          _alreadyHasAccount = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Check existing OPD error: $e');
+    } finally {
+      if (mounted) setState(() => _isCheckingOpd = false);
+    }
+  }
+
+  Future<void> _checkExistingOpdByEmail(String email) async {
+    final cleanEmail = email.trim().toLowerCase();
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(cleanEmail)) return;
+    try {
+      final q = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: cleanEmail)
+          .limit(1)
+          .get();
+
+      if (q.docs.isNotEmpty && mounted) {
+        final data = q.docs.first.data();
+        final bool isAuthLinked = data['authLinked'] == true ||
+            (data['authUid'] != null &&
+                data['authUid'].toString().isNotEmpty &&
+                data['isRegisteredByStaff'] != true);
+
+        if (isAuthLinked) {
+          setState(() {
+            _existingOpdRecord = null;
+            _alreadyHasAccount = true;
+          });
+        } else {
+          setState(() {
+            _existingOpdRecord = data;
+            _alreadyHasAccount = false;
+
+            final nicVal = (data['nic'] ?? data['userId'] ?? '').toString();
+            if (_nicController.text.isEmpty && nicVal.isNotEmpty) {
+              _nicController.text = nicVal;
+            }
+            if (_firstNameController.text.isEmpty && data['firstName'] != null) {
+              _firstNameController.text = data['firstName'].toString();
+            }
+            if (_lastNameController.text.isEmpty && data['lastName'] != null) {
+              _lastNameController.text = data['lastName'].toString();
+            }
+            if (_dobController.text.isEmpty && data['dob'] != null) {
+              _dobController.text = data['dob'].toString();
+            }
+            if (_contactController.text.isEmpty &&
+                (data['contactNo'] != null || data['contact'] != null)) {
+              _contactController.text =
+                  (data['contactNo'] ?? data['contact']).toString();
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Check existing OPD by email error: $e');
+    }
   }
 
   Future<void> _selectDate() async {
@@ -70,7 +232,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _signUp() async {
-    // Validate all required fields
+    // 1. Validate all required fields
     if (!_formKey.currentState!.validate()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -85,12 +247,61 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final lastName = _lastNameController.text.trim();
     final dob = _dobController.text.trim();
     final nic = _nicController.text.trim().toUpperCase();
-    final email = _emailController.text.trim();
+    final email = _emailController.text.trim().toLowerCase();
     final contact = _contactController.text.trim();
     final password = _passwordController.text;
 
+    // 2. Prevent duplicate account creation if an active online account already exists
+    if (_alreadyHasAccount) {
+      _showAlreadyRegisteredDialog(email, nic);
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
+      // 3. Double-check Firestore for an existing record to authenticate using registered data
+      DocumentSnapshot<Map<String, dynamic>>? existingDoc;
+      final docByNic =
+          await FirebaseFirestore.instance.collection('users').doc(nic).get();
+      if (docByNic.exists && docByNic.data() != null) {
+        existingDoc = docByNic;
+      } else {
+        final qNic = await FirebaseFirestore.instance
+            .collection('users')
+            .where('nic', isEqualTo: nic)
+            .limit(1)
+            .get();
+        if (qNic.docs.isNotEmpty) {
+          existingDoc = qNic.docs.first;
+        } else {
+          final qEmail = await FirebaseFirestore.instance
+              .collection('users')
+              .where('email', isEqualTo: email)
+              .limit(1)
+              .get();
+          if (qEmail.docs.isNotEmpty) {
+            existingDoc = qEmail.docs.first;
+          }
+        }
+      }
+
+      if (existingDoc != null && existingDoc.data() != null) {
+        final d = existingDoc.data()!;
+        final bool isAlreadyLinked = d['authLinked'] == true ||
+            (d['authUid'] != null &&
+                d['authUid'].toString().isNotEmpty &&
+                d['isRegisteredByStaff'] != true);
+
+        if (isAlreadyLinked) {
+          setState(() => _isLoading = false);
+          if (mounted) {
+            _showAlreadyRegisteredDialog(email, nic);
+          }
+          return;
+        }
+      }
+
+      // 4. Create Firebase Auth user
       final credential =
           await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: email,
@@ -99,22 +310,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final user = credential.user;
       if (user != null) {
-        // Update Firebase Auth profile display name
         await user.updateDisplayName('$firstName $lastName');
+        final userId = nic;
 
-        // Persist full patient record into Cloud Firestore
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        // Retrieve existing OPD data if registered in-person so we do NOT duplicate records
+        final Map<String, dynamic> existingData = existingDoc?.data() ?? {};
+
+        final userData = {
+          ...existingData,
+          'userId': userId,
+          'nic': nic,
+          'patientId': userId,
+          'authUid': user.uid,
+          'uid': user.uid,
           'firstName': firstName,
           'lastName': lastName,
           'fullName': '$firstName $lastName',
           'dob': dob,
-          'nic': nic,
           'email': email,
           'contactNo': contact,
           'role': 'patient',
-          'createdAt': FieldValue.serverTimestamp(),
+          // Mark as claimed and online-activated by patient
+          'isRegisteredByStaff': false,
+          'authLinked': true,
+          'linkedAt': FieldValue.serverTimestamp(),
+          'createdAt': existingData['createdAt'] ?? FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
-        });
+        };
+
+        // Persist into users/{user.uid}
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .set(userData, SetOptions(merge: true));
+
+        // Also persist/merge under users/{userId} so lookup by User ID / NIC remains identical
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .set(userData, SetOptions(merge: true));
       }
 
       if (mounted) {
@@ -132,7 +366,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       String message = 'Registration failed. Please try again.';
       switch (e.code) {
         case 'email-already-in-use':
-          message = 'This email is already registered. Please sign in.';
+          message = 'This email is already in use. Please sign in or reset password.';
           break;
         case 'weak-password':
           message = 'Password is too weak. Please choose a stronger password.';
@@ -165,6 +399,55 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  void _showAlreadyRegisteredDialog(String email, String nic) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.info_outline, color: AppColors.primary400, size: 26),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Account Already Exists',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'An online account is already registered with this NIC ($nic) or Email ($email).\n\n'
+          'Please sign in with your password, or reset your password if you forgot it.',
+          style: const TextStyle(fontSize: 13, color: AppColors.gray500, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.gray400)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary400,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+              );
+            },
+            child: const Text('Sign In Now', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,7 +473,166 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   'All fields marked with * are required to register your patient account.',
                   style: TextStyle(fontSize: 12, color: AppColors.gray400),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+
+                // 1. Existing OPD Record Alert Banner
+                if (_existingOpdRecord != null)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: const Color(0xFF81C784), width: 1.2),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.verified_user_rounded,
+                            color: Color(0xFF2E7D32), size: 24),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Hospital OPD Record Found',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: Color(0xFF1B5E20),
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'We found your record registered at ${_existingOpdRecord!['registeredHospital'] ?? 'Hospital OPD'}. Your details have been pre-filled. Set your password to activate online account access.',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF2E7D32),
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // 2. Already Has Online Account Banner
+                if (_alreadyHasAccount)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: const Color(0xFFFFB74D), width: 1.2),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_outline,
+                            color: Color(0xFFE65100), size: 24),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Online Account Already Active',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: Color(0xFFBF360C),
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                'An online patient account is already registered for this NIC. Please sign in with your password.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFFBF360C),
+                                  height: 1.3,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              GestureDetector(
+                                onTap: () =>
+                                    Navigator.of(context).pushReplacement(
+                                  MaterialPageRoute(
+                                      builder: (_) => const LoginScreen()),
+                                ),
+                                child: const Text(
+                                  'Click here to Sign In →',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: Color(0xFFE65100),
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // NIC Number Field
+                _formField(
+                  controller: _nicController,
+                  hint: 'NIC Number * (e.g. 199012345678 or 901234567V)',
+                  icon: Icons.badge_outlined,
+                  keyboardType: TextInputType.text,
+                  suffixIcon: _isCheckingOpd
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primary400,
+                            ),
+                          ),
+                        )
+                      : null,
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return 'NIC number is required';
+                    if (!RegExp(r'^([0-9]{9}[vVxX]|[0-9]{12})$').hasMatch(v)) {
+                      return 'Invalid NIC. Use 9 digits+V/X (old) or 12 digits (new)';
+                    }
+                    return null;
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 4, bottom: 2),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.info_outline,
+                          size: 13, color: AppColors.primary300),
+                      SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          'Your User ID defaults to your NIC Number. If registered at OPD, your data will link automatically.',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.primary400,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // First Name Field
                 _formField(
                   controller: _firstNameController,
                   hint: 'First Name *',
@@ -199,14 +641,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   validator: (value) {
                     final v = value?.trim() ?? '';
                     if (v.isEmpty) return 'First name is required';
-                    if (v.length < 2) return 'First name must be at least 2 characters';
+                    if (v.length < 2) {
+                      return 'First name must be at least 2 characters';
+                    }
                     if (!RegExp(r"^[a-zA-Z\s'-]+$").hasMatch(v)) {
                       return 'Enter a valid name (letters only)';
                     }
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
+
+                // Last Name Field
                 _formField(
                   controller: _lastNameController,
                   hint: 'Last Name *',
@@ -215,14 +662,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   validator: (value) {
                     final v = value?.trim() ?? '';
                     if (v.isEmpty) return 'Last name is required';
-                    if (v.length < 2) return 'Last name must be at least 2 characters';
+                    if (v.length < 2) {
+                      return 'Last name must be at least 2 characters';
+                    }
                     if (!RegExp(r"^[a-zA-Z\s'-]+$").hasMatch(v)) {
                       return 'Enter a valid name (letters only)';
                     }
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
+
+                // Date of Birth Field
                 _formField(
                   controller: _dobController,
                   hint: 'Date of Birth (DD/MM/YYYY) *',
@@ -235,22 +687,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
-                _formField(
-                  controller: _nicController,
-                  hint: 'NIC Number * (e.g. 199012345678 or 901234567V)',
-                  icon: Icons.badge_outlined,
-                  keyboardType: TextInputType.text,
-                  validator: (value) {
-                    final v = value?.trim() ?? '';
-                    if (v.isEmpty) return 'NIC number is required';
-                    if (!RegExp(r'^([0-9]{9}[vVxX]|[0-9]{12})$').hasMatch(v)) {
-                      return 'Invalid NIC. Use 9 digits+V/X (old) or 12 digits (new)';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
+
+                // Email Field
                 _formField(
                   controller: _emailController,
                   hint: 'Email (Gmail) *',
@@ -259,13 +699,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   validator: (value) {
                     final v = value?.trim() ?? '';
                     if (v.isEmpty) return 'Email is required';
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v)) {
+                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                        .hasMatch(v)) {
                       return 'Enter a valid email address (e.g. name@gmail.com)';
                     }
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
+
+                // Contact No Field
                 _formField(
                   controller: _contactController,
                   hint: 'Contact No * (e.g. 0712345678)',
@@ -280,7 +724,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
+
+                // Password Field
                 _formField(
                   controller: _passwordController,
                   hint: 'Password (min 6 characters) *',
@@ -299,11 +746,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   validator: (value) {
                     final v = value ?? '';
                     if (v.isEmpty) return 'Password is required';
-                    if (v.length < 6) return 'Password must be at least 6 characters';
+                    if (v.length < 6) {
+                      return 'Password must be at least 6 characters';
+                    }
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 12),
+
+                // Confirm Password Field
                 _formField(
                   controller: _confirmPasswordController,
                   hint: 'Confirm Password *',
@@ -328,7 +780,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 24),
+
+                // Submit Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -350,14 +805,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               strokeWidth: 2,
                             ),
                           )
-                        : const Text('Sign Up',
-                            style: TextStyle(
+                        : Text(
+                            _existingOpdRecord != null
+                                ? 'Activate Online Account'
+                                : 'Sign Up',
+                            style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                            )),
+                            ),
+                          ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
+
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
