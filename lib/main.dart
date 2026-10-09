@@ -1,17 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'common Screens/onboarding_screen.dart';
-import 'Patient Management Screens/home_screen.dart';
 import 'theme/app_colors.dart';
+import 'services/booking_service.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
+// Global future so screens requiring Firebase can ensure it is ready
+Future<FirebaseApp>? _firebaseInitFuture;
+
+Future<FirebaseApp> ensureFirebaseInitialized() {
+  _firebaseInitFuture ??= Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  debugPrint('Firebase connected: ${Firebase.app().name}');
+  return _firebaseInitFuture!;
+}
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Start Firebase in background without blocking the first frame,
+  // then seed booking data once Firebase is ready
+  ensureFirebaseInitialized().then((app) async {
+    debugPrint('Firebase connected: ${app.name}');
+    await BookingService().seedIfEmpty();
+  }).catchError((e) {
+    debugPrint('Firebase init error: $e');
+  });
+
+  // Launch UI immediately on frame 1
   runApp(const MyApp());
 }
 
@@ -25,34 +41,17 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary300),
+        scaffoldBackgroundColor: AppColors.white,
         useMaterial3: true,
+        // Snappy, smooth 60fps page transitions without lag
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+            TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
+          },
+        ),
       ),
-      home: const AuthGate(),
-    );
-  }
-}
-
-class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: AppColors.primary100,
-            body: Center(
-              child: CircularProgressIndicator(color: AppColors.primary300),
-            ),
-          );
-        }
-        if (snapshot.hasData && snapshot.data != null) {
-          return const HomeScreen();
-        }
-        return const OnboardingScreen();
-      },
+      home: const OnboardingScreen(),
     );
   }
 }

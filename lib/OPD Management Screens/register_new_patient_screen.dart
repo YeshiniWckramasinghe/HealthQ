@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'opd_bottom_nav.dart';
 
@@ -17,6 +18,7 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
   final _nicController = TextEditingController();
   final _emailController = TextEditingController();
   final _contactController = TextEditingController();
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -56,9 +58,12 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
     }
   }
 
-  void _confirmRegistration() {
-    if (_firstNameController.text.trim().isEmpty ||
-        _nicController.text.trim().isEmpty) {
+  Future<void> _confirmRegistration() async {
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final nic = _nicController.text.trim().toUpperCase();
+
+    if (firstName.isEmpty || nic.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter at least First Name and NIC.'),
@@ -67,15 +72,54 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: OpdColors.primary400,
-        content: Text(
-          'Patient ${_firstNameController.text.trim()} registered successfully!',
+    // User ID strictly defaults to NIC number
+    final userId = nic;
+    final fullName = lastName.isNotEmpty ? '$firstName $lastName' : firstName;
+    final dob = _dobController.text.trim();
+    final email = _emailController.text.trim();
+    final contact = _contactController.text.trim();
+
+    setState(() => _saving = true);
+
+    try {
+      final docRef = FirebaseFirestore.instance.collection('users').doc(userId);
+      await docRef.set({
+        'userId': userId,
+        'nic': nic,
+        'patientId': userId,
+        'firstName': firstName,
+        'lastName': lastName,
+        'fullName': fullName,
+        'dob': dob,
+        'email': email,
+        'contactNo': contact,
+        'role': 'patient',
+        'registeredBy': 'OPD Staff',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: OpdColors.primary400,
+          content: Text(
+            'Patient $fullName registered with User ID: $userId',
+          ),
         ),
-      ),
-    );
-    Navigator.of(context).pop();
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Failed to save patient: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -138,8 +182,8 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
             ),
             const SizedBox(height: 12),
             _buildField(
-              label: 'NIC NO',
-              hint: 'e.g. 199012345678 or 952345678V',
+              label: 'NIC NO (USER ID)',
+              hint: 'e.g. 199012345678 or 952345678V (Assigned as User ID)',
               controller: _nicController,
             ),
             const SizedBox(height: 12),
@@ -163,7 +207,7 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
               width: double.infinity,
               height: 48,
               child: ElevatedButton(
-                onPressed: _confirmRegistration,
+                onPressed: _saving ? null : _confirmRegistration,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: OpdColors.primary400,
                   foregroundColor: OpdColors.white,
@@ -172,13 +216,22 @@ class _RegisterNewPatientScreenState extends State<RegisterNewPatientScreen> {
                   ),
                   elevation: 0,
                 ),
-                child: const Text(
-                  'Confirm Registration',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                child: _saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'Confirm Registration',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
               ),
             ),
 

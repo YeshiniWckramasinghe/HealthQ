@@ -1,108 +1,70 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
+import '../services/staff_auth_service.dart';
 import 'verification_screen.dart';
 
-class ForgotPasswordScreen extends StatefulWidget {
-  final String? initialEmail;
-  const ForgotPasswordScreen({super.key, this.initialEmail});
+class StaffForgotPasswordScreen extends StatefulWidget {
+  final String? initialStaffId;
+
+  const StaffForgotPasswordScreen({
+    super.key,
+    this.initialStaffId,
+  });
 
   @override
-  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+  State<StaffForgotPasswordScreen> createState() =>
+      _StaffForgotPasswordScreenState();
 }
 
-class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+class _StaffForgotPasswordScreenState extends State<StaffForgotPasswordScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _inputController;
+  final _staffIdController = TextEditingController();
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _inputController = TextEditingController(text: widget.initialEmail ?? '');
+    if (widget.initialStaffId != null && widget.initialStaffId!.isNotEmpty) {
+      _staffIdController.text = widget.initialStaffId!;
+    }
   }
 
   @override
   void dispose() {
-    _inputController.dispose();
+    _staffIdController.dispose();
     super.dispose();
-  }
-
-  String _normalizePhoneNumber(String raw) {
-    String cleaned = raw.replaceAll(RegExp(r'[\s\-\(\)]'), '');
-    if (cleaned.startsWith('+')) return cleaned;
-    if (cleaned.startsWith('0')) return '+94${cleaned.substring(1)}';
-    if (cleaned.startsWith('94')) return '+$cleaned';
-    if (cleaned.isEmpty) return '+94712345678';
-    return '+94$cleaned';
   }
 
   Future<void> _handleProceedToVerification() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final input = _inputController.text.trim();
+    final input = _staffIdController.text.trim();
     setState(() => _isLoading = true);
 
     try {
-      String resolvedEmail = input;
-      String resolvedContactNo = input;
-      bool foundInDb = false;
+      final staff = await StaffAuthService.instance.findStaff(input);
 
-      final usersRef = FirebaseFirestore.instance.collection('users');
+      if (!mounted) return;
 
-      // 1. Try finding by email
-      if (input.contains('@')) {
-        final emailSnap = await usersRef.where('email', isEqualTo: input).limit(1).get();
-        if (emailSnap.docs.isNotEmpty) {
-          final data = emailSnap.docs.first.data();
-          resolvedEmail = data['email']?.toString() ?? input;
-          resolvedContactNo = data['contactNo']?.toString() ?? '+94712345678';
-          foundInDb = true;
-        }
-      } else {
-        // 2. Try finding by contact number (original, formatted, or national)
-        final phoneVariants = [
-          input,
-          _normalizePhoneNumber(input),
-          if (input.startsWith('+94')) '0${input.substring(3)}',
-          if (input.startsWith('0')) input.substring(1),
-        ];
-
-        for (final p in phoneVariants) {
-          if (p.isEmpty) continue;
-          final phoneSnap = await usersRef.where('contactNo', isEqualTo: p).limit(1).get();
-          if (phoneSnap.docs.isNotEmpty) {
-            final data = phoneSnap.docs.first.data();
-            resolvedEmail = data['email']?.toString() ?? 'patient@gmail.com';
-            resolvedContactNo = data['contactNo']?.toString() ?? input;
-            foundInDb = true;
-            break;
-          }
-        }
-      }
-
-      if (!foundInDb && !input.contains('@')) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Colors.redAccent,
-              content: Text('No patient account found with this phone number. Please check and try again.'),
-            ),
-          );
-        }
-        return;
-      }
-
-      if (mounted) {
-        // Open VerificationScreen with mobile or gmail verification required
+      if (staff != null) {
+        // Navigate to VerificationScreen with mobile or gmail verification required
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => VerificationScreen(
-              contactNo: resolvedContactNo,
-              email: resolvedEmail,
-              role: 'patient',
+              contactNo: staff.contactNo,
+              email: staff.email,
+              role: staff.role,
+              staffData: staff.toMap(),
               isPasswordReset: true,
             ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Staff member not found in database. Please verify your Staff ID or official email.'),
+            duration: Duration(seconds: 4),
           ),
         );
       }
@@ -111,7 +73,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text('Error finding account: $e'),
+            content: Text('Error: $e'),
           ),
         );
       }
@@ -122,13 +84,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    const primaryTeal = Color(0xFF007A78);
+
     return Scaffold(
-      backgroundColor: AppColors.primary100,
+      backgroundColor: const Color(0xFFF3F7F7),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.primary500),
+          icon: const Icon(Icons.arrow_back, color: primaryTeal),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -138,45 +102,70 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           child: Form(
             key: _formKey,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const SizedBox(height: 10),
-                Center(
-                  child: Container(
-                    width: 68,
-                    height: 68,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary300.withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
+
+                // Top Shield Badge
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: primaryTeal.withValues(alpha: 0.25),
+                      width: 1.5,
                     ),
-                    child: const Icon(
-                      Icons.lock_reset_outlined,
-                      color: AppColors.primary400,
-                      size: 34,
-                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.shield_outlined,
+                    color: primaryTeal,
+                    size: 30,
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 12),
+
                 const Text(
-                  'Forgot Password',
+                  'MINISTRY OF HEALTH SRI LANKA',
                   style: TextStyle(
-                    fontSize: 24,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                    color: AppColors.gray500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+
+                const Text(
+                  'Staff Password Recovery',
+                  style: TextStyle(
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: AppColors.primary500,
                   ),
                 ),
                 const SizedBox(height: 8),
+
                 const Text(
-                  'Enter your registered Email address or Mobile number. We will verify your identity via Mobile SMS or Gmail OTP before resetting your password.',
+                  'Enter your official Staff ID or Email. Mobile or Gmail verification is required to verify your identity before resetting your password.',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: AppColors.gray500,
                     fontSize: 13,
+                    color: AppColors.gray500,
                     height: 1.4,
                   ),
                 ),
                 const SizedBox(height: 24),
 
-                // Security Note Banner
+                // Security Banner
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -186,15 +175,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   ),
                   child: Row(
                     children: const [
-                      Icon(Icons.shield_outlined, color: Color(0xFF007A78), size: 20),
+                      Icon(Icons.lock_clock_outlined, color: primaryTeal, size: 20),
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Verification Required: Choose either Mobile SMS or Gmail OTP on the next screen.',
+                          '2-Step Security: An OTP verification code will be sent to your registered Mobile Number or Gmail.',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF007A78),
+                            color: primaryTeal,
                           ),
                         ),
                       ),
@@ -203,34 +192,32 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Identifier Input (Email or Mobile)
-                const Text(
-                  'REGISTERED EMAIL OR MOBILE NUMBER',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.gray600,
-                    letterSpacing: 0.5,
+                // Staff ID Field
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'STAFF ID OR OFFICIAL EMAIL',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.gray600,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
                 TextFormField(
-                  controller: _inputController,
-                  keyboardType: TextInputType.emailAddress,
+                  controller: _staffIdController,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) {
-                      return 'Please enter your registered email or phone number';
+                      return 'Staff ID or Email is required';
                     }
                     return null;
                   },
                   decoration: InputDecoration(
-                    hintText: 'e.g. name@gmail.com or 0712345678',
+                    hintText: 'e.g. DOC-1001, NUR-2001 or staff@hospital.lk',
                     hintStyle: const TextStyle(color: AppColors.gray400, fontSize: 13),
-                    prefixIcon: const Icon(
-                      Icons.person_search_outlined,
-                      color: AppColors.primary300,
-                      size: 20,
-                    ),
+                    prefixIcon: const Icon(Icons.badge_outlined, color: primaryTeal, size: 20),
                     filled: true,
                     fillColor: AppColors.white,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -244,7 +231,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.primary400, width: 1.5),
+                      borderSide: const BorderSide(color: primaryTeal, width: 1.5),
                     ),
                   ),
                 ),
@@ -257,7 +244,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _handleProceedToVerification,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary400,
+                      backgroundColor: primaryTeal,
                       foregroundColor: AppColors.white,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
@@ -291,17 +278,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                Center(
-                  child: TextButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.arrow_back, size: 16, color: AppColors.gray500),
-                    label: const Text(
-                      'Back to Login',
-                      style: TextStyle(
-                        color: AppColors.gray500,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.arrow_back, size: 16, color: AppColors.gray500),
+                  label: const Text(
+                    'Back to Staff Portal',
+                    style: TextStyle(
+                      color: AppColors.gray500,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
