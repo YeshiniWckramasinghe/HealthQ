@@ -1578,7 +1578,10 @@ class _HomeTab extends StatelessWidget {
               );
             }
             final upcoming = snap.data!
-                .where((a) => a.status == 'upcoming')
+                .where((a) {
+                  final s = a.status.toLowerCase();
+                  return s == 'pending' || s == 'confirmed' || s == 'waiting' || s == 'upcoming';
+                })
                 .toList()
               ..sort((a, b) => a.date.compareTo(b.date));
             if (upcoming.isEmpty) {
@@ -1598,6 +1601,7 @@ class _HomeTab extends StatelessWidget {
               );
             }
             final a = upcoming.first;
+            final isPending = a.status.toLowerCase() == 'pending';
             return Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -1636,13 +1640,22 @@ class _HomeTab extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: AppColors.primary300,
+                          color: isPending
+                              ? const Color(0xFFFEF3C7)
+                              : AppColors.primary300,
                           borderRadius: BorderRadius.circular(20),
+                          border: isPending
+                              ? Border.all(color: const Color(0xFFFCD34D))
+                              : null,
                         ),
                         child: Text(
-                            'Queue #${a.queueNo.toString().padLeft(2, '0')}',
-                            style: const TextStyle(
-                                color: AppColors.white,
+                            isPending
+                                ? 'Pending (#${a.queueNo.toString().padLeft(2, '0')})'
+                                : 'Queue #${a.queueNo.toString().padLeft(2, '0')}',
+                            style: TextStyle(
+                                color: isPending
+                                    ? const Color(0xFFB45309)
+                                    : AppColors.white,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold)),
                       ),

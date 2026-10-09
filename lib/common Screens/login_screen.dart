@@ -118,6 +118,18 @@ class _LoginScreenState extends State<LoginScreen> {
               }
               return;
             }
+
+            // Check if patient was registered at OPD desk without online credentials
+            if (data['authLinked'] != true || data['isRegisteredByStaff'] == true) {
+              if (mounted) {
+                _showOpdNeedsActivationDialog(
+                  email,
+                  (data['nic'] ?? data['userId'] ?? '').toString(),
+                  data['registeredHospital']?.toString(),
+                );
+                return;
+              }
+            }
           }
         } catch (dbErr) {
           debugPrint('Firestore fallback login check: $dbErr');
@@ -248,6 +260,43 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // ---------------------------------------------------------
+      // CASE 1.5: OPD REGISTERED PATIENT - ACTIVATE WITH GOOGLE
+      // ---------------------------------------------------------
+      if (userData['isRegisteredByStaff'] == true || userData['authLinked'] != true) {
+        final nic = (userData['nic'] ?? userData['userId'] ?? '').toString();
+        final activatedData = {
+          ...userData,
+          'authUid': user.uid,
+          'uid': user.uid,
+          'googleAuth': true,
+          'authLinked': true,
+          'isRegisteredByStaff': false,
+          'emailVerified': true,
+          'lastLogin': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .set(activatedData, SetOptions(merge: true));
+
+        if (nic.isNotEmpty) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(nic)
+              .set(activatedData, SetOptions(merge: true));
+        }
+
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        }
+        return;
+      }
+
+      // ---------------------------------------------------------
       // CASE 2: REGISTERED BUT NOT VERIFIED
       // Show clear "Verification Required" dialog with Verify button
       // ---------------------------------------------------------
@@ -304,6 +353,63 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // ================= OPD NEEDS ONLINE ACTIVATION MODAL =================
+  void _showOpdNeedsActivationDialog(String email, String nic, String? hospital) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.medical_services_outlined, color: AppColors.primary400, size: 28),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'OPD Record Found',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Your patient record was registered in-person at ${hospital != null && hospital.isNotEmpty ? hospital : 'the hospital OPD desk'}, '
+          'but your online patient account is not yet activated.\n\n'
+          'Please click "Activate Online Account" to set your password and link your medical record.',
+          style: const TextStyle(fontSize: 13, color: AppColors.gray500, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.gray400)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary400,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => RegisterScreen(
+                    initialEmail: email,
+                    initialNic: nic,
+                  ),
+                ),
+              );
+            },
+            child: const Text('Activate Online Account', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   // ================= NOT REGISTERED MODAL DIALOG =================
