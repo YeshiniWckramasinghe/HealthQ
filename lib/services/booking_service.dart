@@ -37,6 +37,157 @@ class Hospital {
     return '$p$d$numStr';
   }
 
+  /// Resolves Hospital Identification No (e.g. WC00001, WG00002, CK00003, SG00004, NJ00005, NK00006)
+  /// from hospital code, hospital name, or location.
+  static String resolveHospitalCode(String? hospitalNameOrId) {
+    if (hospitalNameOrId == null || hospitalNameOrId.trim().isEmpty) return '';
+    final raw = hospitalNameOrId.trim();
+    if (RegExp(r'^[A-Za-z]{2}\d{5}$').hasMatch(raw)) {
+      return raw.toUpperCase();
+    }
+    final key = raw.toLowerCase();
+    // Prioritize specific hospital names before generic words like "teaching" or "district"
+    if (key.contains('karapitiya') || key.contains('galle') || key.contains('sg00004')) {
+      return 'SG00004';
+    } else if (key.contains('jaffna') || key.contains('nj00005')) {
+      return 'NJ00005';
+    } else if (key.contains('kurunegala') || key.contains('nk00006')) {
+      return 'NK00006';
+    } else if (key.contains('kandy') || key.contains('ck00003') || key == 'teaching hospital') {
+      return 'CK00003';
+    } else if (key.contains('gampaha') || key.contains('negombo') || key.contains('wg00002') || key == 'district hospital') {
+      return 'WG00002';
+    } else if (key.contains('city') || key.contains('colombo') || key.contains('wc00001') || key.contains('national')) {
+      return 'WC00001';
+    } else if (key.contains('teaching')) {
+      return 'CK00003';
+    } else if (key.contains('district')) {
+      return 'WG00002';
+    }
+    return '';
+  }
+
+  /// Strictly determines if an item's hospital (e.g., appointment or doctor)
+  /// belongs to the target hospital.
+  static bool matchesHospital({
+    required String targetHospital,
+    String? targetCode,
+    required String itemHospital,
+    String? itemCode,
+  }) {
+    final tHosp = targetHospital.trim().toLowerCase();
+    final iHosp = itemHospital.trim().toLowerCase();
+
+    // 1. Resolve official 7-char codes (e.g. WC00001, CK00003, WG00002)
+    final tResolvedCode = resolveHospitalCode(
+        targetCode != null && targetCode.trim().isNotEmpty
+            ? targetCode
+            : targetHospital);
+    final iResolvedCode = resolveHospitalCode(
+        itemCode != null && itemCode.trim().isNotEmpty
+            ? itemCode
+            : itemHospital);
+
+    // If both resolve to valid official codes and they match, it is a DEFINITE MATCH!
+    if (tResolvedCode.isNotEmpty &&
+        iResolvedCode.isNotEmpty &&
+        tResolvedCode == iResolvedCode) {
+      return true;
+    }
+
+    // 2. Exact match of raw codes or IDs (e.g. "city_general" == "city_general")
+    final tRawCode = (targetCode ?? '').trim().toLowerCase();
+    final iRawCode = (itemCode ?? '').trim().toLowerCase();
+    if (tRawCode.isNotEmpty && iRawCode.isNotEmpty && tRawCode == iRawCode) {
+      return true;
+    }
+
+    // 3. Exact hospital name match
+    if (tHosp.isNotEmpty && iHosp.isNotEmpty && tHosp == iHosp) {
+      return true;
+    }
+
+    // 4. Target code contained in item hospital or vice-versa
+    if (tResolvedCode.isNotEmpty &&
+        (iHosp.contains(tResolvedCode.toLowerCase()) ||
+            iRawCode.contains(tResolvedCode.toLowerCase()))) {
+      return true;
+    }
+    if (iResolvedCode.isNotEmpty &&
+        (tHosp.contains(iResolvedCode.toLowerCase()) ||
+            tRawCode.contains(iResolvedCode.toLowerCase()))) {
+      return true;
+    }
+
+    // 5. If BOTH resolved to DIFFERENT valid 7-char codes (e.g. WC00001 != WG00002),
+    // they definitely belong to different hospitals!
+    if (tResolvedCode.isNotEmpty &&
+        iResolvedCode.isNotEmpty &&
+        tResolvedCode != iResolvedCode) {
+      return false;
+    }
+
+    // 6. Name containment (one contains the other)
+    if (tHosp.isNotEmpty && iHosp.isNotEmpty) {
+      if (tHosp.contains(iHosp) || iHosp.contains(tHosp)) return true;
+
+      // 7. Distinct keyword matching
+      if ((tHosp.contains('colombo') || tHosp.contains('city')) &&
+          (iHosp.contains('colombo') || iHosp.contains('city'))) {
+        return true;
+      }
+      if ((tHosp.contains('gampaha') ||
+              tHosp.contains('negombo') ||
+              tHosp.contains('district')) &&
+          (iHosp.contains('gampaha') ||
+              iHosp.contains('negombo') ||
+              iHosp.contains('district'))) {
+        return true;
+      }
+      if (tHosp.contains('kandy') && iHosp.contains('kandy')) {
+        return true;
+      }
+      if ((tHosp.contains('karapitiya') || tHosp.contains('galle')) &&
+          (iHosp.contains('karapitiya') || iHosp.contains('galle'))) {
+        return true;
+      }
+      if (tHosp.contains('jaffna') && iHosp.contains('jaffna')) {
+        return true;
+      }
+      if (tHosp.contains('kurunegala') && iHosp.contains('kurunegala')) {
+        return true;
+      }
+    }
+
+    // 8. If itemHospital is empty but itemCode matched via keyword
+    if (tHosp.isNotEmpty && iRawCode.isNotEmpty) {
+      if (iRawCode.contains('colombo') || iRawCode.contains('city')) {
+        if (tHosp.contains('colombo') || tHosp.contains('city')) {
+          return true;
+        }
+      }
+      if (iRawCode.contains('kandy') && tHosp.contains('kandy')) {
+        return true;
+      }
+      if ((iRawCode.contains('gampaha') || iRawCode.contains('negombo')) &&
+          (tHosp.contains('gampaha') || tHosp.contains('negombo'))) {
+        return true;
+      }
+      if ((iRawCode.contains('karapitiya') || iRawCode.contains('galle')) &&
+          (tHosp.contains('karapitiya') || tHosp.contains('galle'))) {
+        return true;
+      }
+      if (iRawCode.contains('jaffna') && tHosp.contains('jaffna')) {
+        return true;
+      }
+      if (iRawCode.contains('kurunegala') && tHosp.contains('kurunegala')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   factory Hospital.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data() ?? {};
     final rawSlots = m['slotsLeft'] ?? m['slots_left'] ?? 0;
@@ -172,6 +323,9 @@ class Doctor {
     final rawHosp =
         m['hospital'] ?? m['hospitalName'] ?? m['hospital_name'] ?? '';
     final rawHospId = m['hospitalId'] ?? m['hospitalCode'] ?? m['identificationNo'];
+    final effectiveHospId = (rawHospId != null && rawHospId.toString().trim().isNotEmpty)
+        ? rawHospId.toString().trim()
+        : Hospital.resolveHospitalCode(rawHosp.toString());
     final rawRoom = m['room'] ?? m['roomNo'] ?? m['room_no'];
     final rawPhone =
         m['contactNo'] ?? m['phone'] ?? m['mobile'] ?? m['contact'];
@@ -182,7 +336,7 @@ class Doctor {
       name: nameStr,
       speciality: specStr,
       hospital: rawHosp.toString().trim(),
-      hospitalId: rawHospId?.toString().trim(),
+      hospitalId: effectiveHospId.isNotEmpty ? effectiveHospId : null,
       room: rawRoom?.toString().trim(),
       contactNo: rawPhone?.toString().trim(),
       email: rawEmail?.toString().trim(),
@@ -230,23 +384,25 @@ class AppointmentRecord {
     final nicVal = (m['nic'] ?? '').toString();
     final userVal = (m['userId'] ?? '').toString();
     final authVal = (m['authUid'] ?? m['userUid'] ?? '').toString();
+    final rawHospName = (m['hospitalName'] ?? m['hospital'] ?? '').toString();
     final hid = (m['hospitalIdentificationNo'] ??
             m['hospitalCode'] ??
             m['hospitalId'] ??
             '')
         .toString();
+    final effectiveHid = Hospital.resolveHospitalCode(hid.isNotEmpty ? hid : rawHospName);
     return AppointmentRecord(
       id: d.id,
       userId: userVal.isNotEmpty ? userVal : nicVal,
       authUid: authVal,
       nic: nicVal,
-      hospitalName: m['hospitalName'] ?? '',
-      hospitalIdentificationNo: hid,
+      hospitalName: rawHospName,
+      hospitalIdentificationNo: effectiveHid,
       doctorName: m['doctorName'] ?? '',
       date: m['date'] ?? '',
       dateLabel: m['dateLabel'] ?? '',
       session: m['session'] ?? '',
-      status: m['status'] ?? 'upcoming',
+      status: m['status'] ?? 'pending',
       queueNo: (m['queueNo'] ?? 0) as int,
       createdAt: (m['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       patientName: m['patientName'] ?? '',
@@ -319,7 +475,8 @@ class NotificationItem {
 }
 
 class BookingService {
-  final _db = FirebaseFirestore.instance;
+  static final BookingService instance = BookingService();
+  FirebaseFirestore get _db => FirebaseFirestore.instance;
 
   static String queueKey(String hid, String did, String date, String session) =>
       '${hid}_${did}_${date}_$session';
@@ -718,47 +875,66 @@ class BookingService {
 
     var allDoctors = doctorsMap.values.toList();
 
-    // 4. If hospital is selected, filter doctors assigned to this hospital (or general OPD doctors)
-    if ((hospitalId != null && hospitalId.isNotEmpty) ||
-        (hospitalName != null && hospitalName.isNotEmpty)) {
-      final targetHosp = (hospitalName ?? hospitalId ?? '').toLowerCase().trim();
-      final targetId = (hospitalId ?? '').toLowerCase().trim();
+    final bool hasHospitalFilter = (hospitalId != null && hospitalId.isNotEmpty) ||
+        (hospitalName != null && hospitalName.isNotEmpty);
+
+    // 4. If hospital is selected, strictly filter doctors assigned to this hospital
+    if (hasHospitalFilter) {
+      final targetHosp = (hospitalName ?? hospitalId ?? '').trim();
+      final targetCode = Hospital.resolveHospitalCode(hospitalId ?? hospitalName);
 
       final filtered = allDoctors.where((d) {
-        if (d.hospital.isEmpty) return true;
-        final dh = d.hospital.toLowerCase().trim();
-        final did = (d.hospitalId ?? '').toLowerCase().trim();
-        return dh.contains(targetHosp) ||
-            targetHosp.contains(dh) ||
-            (targetId.isNotEmpty && (dh.contains(targetId) || did.contains(targetId) || targetId.contains(did)));
+        return Hospital.matchesHospital(
+          targetHospital: targetHosp,
+          targetCode: targetCode,
+          itemHospital: d.hospital,
+          itemCode: d.hospitalId,
+        );
       }).toList();
 
       if (filtered.isNotEmpty) {
         allDoctors = filtered;
       } else {
-        // Fall back to sample doctors specifically for this hospital
+        // Fall back to sample doctors STRICTLY for this hospital only
         final sampleForHosp = _sampleHospitalDoctors.where((d) {
-          final dh = d.hospital.toLowerCase().trim();
-          final did = (d.hospitalId ?? '').toLowerCase().trim();
-          return dh.contains(targetHosp) ||
-              targetHosp.contains(dh) ||
-              (targetId.isNotEmpty && (dh.contains(targetId) || did.contains(targetId) || targetId.contains(did)));
+          return Hospital.matchesHospital(
+            targetHospital: targetHosp,
+            targetCode: targetCode,
+            itemHospital: d.hospital,
+            itemCode: d.hospitalId,
+          );
         }).toList();
 
-        if (sampleForHosp.isNotEmpty) {
-          allDoctors = sampleForHosp;
-        }
+        allDoctors = sampleForHosp;
       }
-    }
-
-    // 5. Fallback sample registered doctors if the database is genuinely empty
-    if (allDoctors.isEmpty) {
-      allDoctors = List.from(_sampleHospitalDoctors);
+    } else {
+      // 5. Fallback sample registered doctors ONLY when no hospital filter is specified
+      if (allDoctors.isEmpty) {
+        allDoctors = List.from(_sampleHospitalDoctors);
+      }
     }
 
     // Sort alphabetically by doctor name
     allDoctors.sort((a, b) => a.name.compareTo(b.name));
     return allDoctors;
+  }
+
+  /// Get sample doctors for a specific hospital (used for seeding or fallback)
+  List<Doctor> getSampleDoctorsForHospital(String? hospitalNameOrId) {
+    if (hospitalNameOrId == null || hospitalNameOrId.trim().isEmpty) {
+      return List.unmodifiable(_sampleHospitalDoctors);
+    }
+    final targetHosp = hospitalNameOrId.trim();
+    final targetCode = Hospital.resolveHospitalCode(targetHosp);
+    final docs = _sampleHospitalDoctors.where((d) {
+      return Hospital.matchesHospital(
+        targetHospital: targetHosp,
+        targetCode: targetCode,
+        itemHospital: d.hospital,
+        itemCode: d.hospitalId,
+      );
+    }).toList();
+    return docs;
   }
 
   /// Fills each doctor's `waiting` with the current queue count for that date/session.
@@ -844,6 +1020,14 @@ class BookingService {
         'session': session,
       });
 
+      final cleanHospCode = hospital.identificationNo.isNotEmpty &&
+              RegExp(r'^[A-Za-z]{2}\d{5}$').hasMatch(hospital.identificationNo.trim())
+          ? hospital.identificationNo.trim().toUpperCase()
+          : Hospital.resolveHospitalCode('${hospital.id}_${hospital.name}');
+
+      // Appointments are initially 'pending' awaiting confirmation by hospital OPD staff
+      const initialStatus = 'pending';
+
       // Saved with User ID strictly defaulting to NIC
       tx.set(aRef, {
         'userId': effectiveUserId,
@@ -851,11 +1035,13 @@ class BookingService {
         'authUid': user.uid,
         'userUid': user.uid,
         'hospitalId': hospital.id,
-        'hospitalIdentificationNo': hospital.identificationNo,
-        'hospitalCode': hospital.identificationNo,
+        'hospitalIdentificationNo': cleanHospCode,
+        'hospitalCode': cleanHospCode,
         'hospitalName': hospital.name,
+        'hospital': hospital.name,
         'doctorId': doctor.id,
         'doctorName': doctor.name,
+        'doctor': doctor.name,
         'speciality': doctor.speciality,
         'date': date,
         'dateLabel': dateLabel,
@@ -865,16 +1051,17 @@ class BookingService {
         'dob': dob,
         'contact': contact,
         'queueNo': next,
-        'status': 'upcoming',
+        'status': initialStatus,
+        'isConfirmedByStaff': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
       tx.set(nRef, {
         'userId': user.uid,
         'patientUserId': effectiveUserId,
-        'title': 'Appointment Confirmed',
+        'title': 'Appointment Request Submitted',
         'body':
-            'Your appointment at ${hospital.name} on $dateLabel is confirmed. Queue #$next. Patient User ID: $effectiveUserId.',
+            'Your appointment request at ${hospital.name} on $dateLabel is submitted (Pending Confirmation). Queue token #$next reserved. Hospital OPD staff will review and confirm.',
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -928,6 +1115,77 @@ class BookingService {
         return list;
       });
     });
+  }
+
+  /// Confirms an appointment by OPD management staff
+  Future<void> confirmAppointment({
+    required String appointmentId,
+    String? staffName,
+    String? staffHospital,
+  }) async {
+    final docRef = _db.collection('appointments').doc(appointmentId);
+    final doc = await docRef.get();
+    if (!doc.exists) throw Exception('Appointment not found');
+    final data = doc.data() ?? {};
+
+    await docRef.update({
+      'status': 'confirmed',
+      'isConfirmedByStaff': true,
+      'confirmedByStaffName': staffName ?? 'OPD Management',
+      'confirmedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Notify patient in real-time
+    final targetUid = (data['authUid'] ?? data['userUid'] ?? data['userId'] ?? '').toString();
+    if (targetUid.isNotEmpty) {
+      await _db.collection('notifications').add({
+        'userId': targetUid,
+        'patientUserId': data['userId'] ?? '',
+        'title': 'Appointment Confirmed!',
+        'body':
+            'Your appointment with ${data['doctorName'] ?? 'Doctor'} at ${data['hospitalName'] ?? 'the hospital'} on ${data['dateLabel'] ?? data['date'] ?? ''} has been confirmed by OPD Management. Queue #${data['queueNo'] ?? ''}.',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  /// Rejects or cancels an appointment by OPD management staff
+  Future<void> cancelAppointment({
+    required String appointmentId,
+    String? reason,
+    String? cancelNotes,
+    String? staffName,
+  }) async {
+    final docRef = _db.collection('appointments').doc(appointmentId);
+    final doc = await docRef.get();
+    if (!doc.exists) throw Exception('Appointment not found');
+    final data = doc.data() ?? {};
+
+    final effectiveReason = reason ?? 'Cancelled by OPD Management';
+    await docRef.update({
+      'status': 'cancelled',
+      'cancelReason': effectiveReason,
+      if (cancelNotes != null && cancelNotes.trim().isNotEmpty)
+        'cancelNotes': cancelNotes.trim(),
+      if (staffName != null && staffName.trim().isNotEmpty)
+        'cancelledByStaffName': staffName.trim(),
+      'cancelledAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Notify patient
+    final targetUid = (data['authUid'] ?? data['userUid'] ?? data['userId'] ?? '').toString();
+    if (targetUid.isNotEmpty) {
+      await _db.collection('notifications').add({
+        'userId': targetUid,
+        'patientUserId': data['userId'] ?? '',
+        'title': 'Appointment Update',
+        'body':
+            'Your appointment at ${data['hospitalName'] ?? 'the hospital'} on ${data['dateLabel'] ?? data['date'] ?? ''} has been cancelled: $effectiveReason.',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
   }
 
   Stream<UserProfile> myProfile() {

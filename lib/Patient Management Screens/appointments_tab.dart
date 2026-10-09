@@ -142,9 +142,11 @@ class AppointmentsTabState extends State<AppointmentsTab> {
         .firstOrNull;
     if (hospital == null) {
       if (_hospital != null && _hospital!.isNotEmpty) {
+        final hospCode = Hospital.resolveHospitalCode(_hospitalId ?? _hospital);
         hospital = Hospital(
           id: _hospitalId ?? _hospital!.toLowerCase().replaceAll(' ', '_'),
           name: _hospital!,
+          identificationNo: hospCode,
           province: '',
           district: '',
           city: '',
@@ -1197,17 +1199,26 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   // ---------- Appointments history ----------
   Widget _history() {
-    Color bg(String s) => switch (s) {
+    Color bg(String s) => switch (s.toLowerCase()) {
+          'pending' => const Color(0xFFFEF3C7),
+          'confirmed' || 'waiting' => const Color(0xFFD1FAE5),
           'upcoming' => AppColors.primary100,
           'completed' => Colors.green.shade50,
           _ => Colors.red.shade50,
         };
-    Color fg(String s) => switch (s) {
+    Color fg(String s) => switch (s.toLowerCase()) {
+          'pending' => const Color(0xFFB45309),
+          'confirmed' || 'waiting' => const Color(0xFF047857),
           'upcoming' => AppColors.primary300,
           'completed' => Colors.green.shade700,
           _ => Colors.red.shade700,
         };
-    String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    String cap(String s) {
+      final lower = s.toLowerCase();
+      if (lower == 'pending') return 'Pending Confirmation';
+      if (lower == 'confirmed') return 'Confirmed';
+      return s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    }
     Widget msg(String t) => Center(
         child: Text(t,
             style: const TextStyle(fontSize: 12, color: AppColors.gray400)));
@@ -1596,54 +1607,77 @@ class _ConfirmedScreen extends StatelessWidget {
             children: [
               const Spacer(),
               Container(
-                width: 110,
-                height: 110,
+                width: 100,
+                height: 100,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.primary200.withValues(alpha: 0.2),
+                  color: const Color(0xFFFEF3C7),
+                  border: Border.all(color: const Color(0xFFFDE68A), width: 3),
                 ),
                 child: Center(
                   child: Container(
-                    width: 76,
-                    height: 76,
+                    width: 68,
+                    height: 68,
                     decoration: const BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.primary200,
+                      color: Color(0xFFF59E0B),
                     ),
-                    child: const Icon(Icons.done_all,
-                        size: 36, color: AppColors.white),
+                    child: const Icon(Icons.hourglass_top_rounded,
+                        size: 34, color: Colors.white),
                   ),
                 ),
               ),
-              const SizedBox(height: 28),
-              const Text('Appointment Confirmed!',
+              const SizedBox(height: 22),
+              const Text('Appointment Request Submitted',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                      fontSize: 22,
+                      fontSize: 20,
                       fontWeight: FontWeight.bold,
                       color: AppColors.primary500)),
               const SizedBox(height: 6),
-              const Text('Your queue number is',
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFCD34D)),
+                ),
+                child: const Text('Status: Pending OPD Confirmation',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFB45309))),
+              ),
+              const SizedBox(height: 14),
+              const Text('Your requested queue token is',
                   style: TextStyle(fontSize: 12, color: AppColors.gray400)),
-              const SizedBox(height: 20),
+              const SizedBox(height: 8),
               Text(queue,
                   style: const TextStyle(
-                      fontSize: 56,
+                      fontSize: 48,
                       fontWeight: FontWeight.w900,
-                      color: AppColors.primary300)),
-              const SizedBox(height: 20),
+                      color: Color(0xFFD97706))),
+              const SizedBox(height: 14),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   color: AppColors.white,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppColors.gray100),
                 ),
                 child: Text(summary,
+                    textAlign: TextAlign.center,
                     style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primary500)),
+              ),
+              const SizedBox(height: 10),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Hospital OPD management will review and confirm your slot. You will receive an immediate notification upon confirmation.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: AppColors.gray400, height: 1.4),
+                ),
               ),
               const Spacer(),
               SizedBox(

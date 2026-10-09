@@ -8,3 +8,6 @@ export 'register_new_patient_screen.dart';
 export 'manage_patient_screen.dart';
 export 'appointments_list_screen.dart';
 export 'appointment_details_screen.dart';
+export 'nurse_profile_screen.dart';
+export 'patient_inquiry_screen.dart';
+export 'cancel_appointment_screen.dart';

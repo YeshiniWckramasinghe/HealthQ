@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection: Allows patients and OPD Staff to read, register, and manage patient records
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    
+    // Staff collection: Allows hospital staff authentication and profile updates
+    match /staff/{staffId} {
+      allow read, write: if true;
+    }
+    
+    // Hospitals collection: Allows reading hospital details, departments, and doctors
+    match /hospitals/{hospitalId} {
+      allow read: if true;
+      allow write: if true;
+      
+      match /doctors/{doctorId} {
+        allow read: if true;
+        allow write: if true;
+      }
+    }
+    
+    // Appointments collection: Allows booking, viewing, and queue management
+    match /appointments/{appointmentId} {
+      allow read, write: if true;
+    }
+    
+    // Queues collection: Live OPD queue tracking
+    match /queues/{queueId} {
+      allow read, write: if true;
+    }
+    
+    // Notifications collection: Alerts and token notifications
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Default fallback
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

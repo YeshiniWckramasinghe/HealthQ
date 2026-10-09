@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_colors.dart';
 import 'opd_bottom_nav.dart';
+import 'patient_inquiry_screen.dart';
 
 class ManagePatientScreen extends StatefulWidget {
   final String? searchNic;
+  final String? hospital;
+  final String? hospitalCode;
 
   const ManagePatientScreen({
     super.key,
     this.searchNic,
+    this.hospital,
+    this.hospitalCode,
   });
 
   @override
@@ -77,6 +83,12 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
 
     setState(() => _isLoading = true);
     try {
+      if (FirebaseAuth.instance.currentUser == null) {
+        try {
+          await FirebaseAuth.instance.signInAnonymously();
+        } catch (_) {}
+      }
+
       DocumentSnapshot<Map<String, dynamic>>? foundDoc;
 
       // 1. Check direct doc users/{term}
@@ -86,8 +98,10 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
           .get();
       if (directDoc.exists && directDoc.data() != null) {
         foundDoc = directDoc;
-      } else {
-        // 2. Query where userId == term
+      }
+
+      // 2. Query where userId == term
+      if (foundDoc == null) {
         final qUser = await FirebaseFirestore.instance
             .collection('users')
             .where('userId', isEqualTo: term)
@@ -95,16 +109,68 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
             .get();
         if (qUser.docs.isNotEmpty) {
           foundDoc = qUser.docs.first;
+        }
+      }
+
+      // 3. Query where nic == term
+      if (foundDoc == null) {
+        final qNic = await FirebaseFirestore.instance
+            .collection('users')
+            .where('nic', isEqualTo: term)
+            .limit(1)
+            .get();
+        if (qNic.docs.isNotEmpty) {
+          foundDoc = qNic.docs.first;
+        }
+      }
+
+      // 4. Query contactNo or contact
+      if (foundDoc == null) {
+        final qPhone1 = await FirebaseFirestore.instance
+            .collection('users')
+            .where('contactNo', isEqualTo: term)
+            .limit(1)
+            .get();
+        if (qPhone1.docs.isNotEmpty) {
+          foundDoc = qPhone1.docs.first;
         } else {
-          // 3. Query where nic == term
-          final qNic = await FirebaseFirestore.instance
+          final qPhone2 = await FirebaseFirestore.instance
               .collection('users')
-              .where('nic', isEqualTo: term)
+              .where('contact', isEqualTo: term)
               .limit(1)
               .get();
-          if (qNic.docs.isNotEmpty) {
-            foundDoc = qNic.docs.first;
+          if (qPhone2.docs.isNotEmpty) {
+            foundDoc = qPhone2.docs.first;
           }
+        }
+      }
+
+      // 5. Query email
+      if (foundDoc == null) {
+        final qEmail = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: term.toLowerCase())
+            .limit(1)
+            .get();
+        if (qEmail.docs.isNotEmpty) {
+          foundDoc = qEmail.docs.first;
+        }
+      }
+
+      // 6. Name match fallback from recent patients
+      if (foundDoc == null) {
+        final recent = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'patient')
+            .limit(40)
+            .get();
+        final match = recent.docs.where((doc) {
+          final m = doc.data();
+          final fn = (m['fullName'] ?? m['name'] ?? '').toString().toLowerCase();
+          return fn.contains(term.toLowerCase());
+        }).toList();
+        if (match.isNotEmpty) {
+          foundDoc = match.first;
         }
       }
 
@@ -238,6 +304,12 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
+      if (FirebaseAuth.instance.currentUser == null) {
+        try {
+          await FirebaseAuth.instance.signInAnonymously();
+        } catch (_) {}
+      }
+
       final batch = FirebaseFirestore.instance.batch();
       batch.set(
         FirebaseFirestore.instance.collection('users').doc(docId),
@@ -307,6 +379,26 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'View Patient Inquiry & History',
+            icon: const Icon(Icons.manage_search, color: OpdColors.white),
+            onPressed: () {
+              final term = _nicController.text.trim().isNotEmpty
+                  ? _nicController.text.trim()
+                  : _searchController.text.trim();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PatientInquiryScreen(
+                    initialQuery: term.isNotEmpty ? term : null,
+                    hospital: widget.hospital,
+                    hospitalCode: widget.hospitalCode,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -559,11 +651,53 @@ class _ManagePatientScreenState extends State<ManagePatientScreen> {
                 ),
               ],
             ),
+            if (_loadedDocId != null || _nicController.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.manage_search, size: 20, color: OpdColors.primary400),
+                  label: const Text(
+                    'View Patient Inquiry & History',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: OpdColors.primary400,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: OpdColors.primary300, width: 1.2),
+                    backgroundColor: OpdColors.primary100,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
+                  onPressed: () {
+                    final term = _nicController.text.trim().isNotEmpty
+                        ? _nicController.text.trim()
+                        : _searchController.text.trim();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PatientInquiryScreen(
+                          initialQuery: term.isNotEmpty ? term : null,
+                          hospital: widget.hospital,
+                          hospitalCode: widget.hospitalCode,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
           ],
         ),
       ),
-      bottomNavigationBar: const OpdBottomNav(currentIndex: 0),
+      bottomNavigationBar: OpdBottomNav(
+        currentIndex: 0,
+        hospital: widget.hospital,
+      ),
     );
   }
 

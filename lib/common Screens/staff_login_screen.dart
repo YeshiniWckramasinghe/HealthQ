@@ -507,7 +507,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 border: Border.all(color: const Color(0xFFCFDFE0)),
               ),
               child: const SelectableText(
-                'rules_version = \'2\';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /staff/{staffId} {\n      allow read, write: if true;\n    }\n    match /hospitals/{hospitalId} {\n      allow read: if true;\n    }\n    match /{document=**} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}',
+                'rules_version = \'2\';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/{userId} {\n      allow read, write: if true;\n    }\n    match /staff/{staffId} {\n      allow read, write: if true;\n    }\n    match /hospitals/{hospitalId} {\n      allow read, write: if true;\n    }\n    match /appointments/{appointmentId} {\n      allow read, write: if true;\n    }\n    match /queues/{queueId} {\n      allow read, write: if true;\n    }\n    match /{document=**} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}',
                 style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 11,
