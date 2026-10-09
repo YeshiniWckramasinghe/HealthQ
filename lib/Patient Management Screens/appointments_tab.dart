@@ -15,7 +15,13 @@ const _sessions = {
 class AppointmentsTab extends StatefulWidget {
   /// Called when the user taps "Back to Home" on the confirmation screen.
   final VoidCallback? onBackToHome;
-  const AppointmentsTab({super.key, this.onBackToHome});
+  final ValueChanged<CheckInAppointment>? onAppointmentConfirmed;
+
+  const AppointmentsTab({
+    super.key,
+    this.onBackToHome,
+    this.onAppointmentConfirmed,
+  });
 
   @override
   State<AppointmentsTab> createState() => AppointmentsTabState();
@@ -281,6 +287,18 @@ class AppointmentsTabState extends State<AppointmentsTab> {
 
   bool _openedFromHome = false;
 
+  final _nicController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _dobController = TextEditingController();
+  final _contactController = TextEditingController();
+
+  static const _hospital = 'City General Hospital';
+  static const _date = '22 Sep 2026';
+  static const _session = 'Morning (9:00 - 12:00)';
+  static const _doctor = 'Dr. S. Perera';
+  static const _speciality = 'Internal Medicine';
+  static const _queue = '#12';
+
   void _go(int s) => setState(() => _step = s);
 
   /// Lets other tabs (e.g. Profile) jump straight to the history list.
@@ -344,10 +362,60 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (_step == 0) {
-      return _hospitals();
+  void dispose() {
+    _nicController.dispose();
+    _nameController.dispose();
+    _dobController.dispose();
+    _contactController.dispose();
+    super.dispose();
+  }
+
+  CheckInAppointment _buildAppointment() {
+    return CheckInAppointment(
+      appointmentId: '',
+      nic: _nicController.text.trim().toUpperCase(),
+      hospital: _hospital,
+      date: _date,
+      session: _session,
+      doctor: _doctor,
+      speciality: _speciality,
+      patient: _nameController.text.trim(),
+      contact: _contactController.text.trim(),
+      dateOfBirth: _dobController.text.trim(),
+      estimatedQueueNumber: _queue,
+    );
+  }
+
+  void _confirmAppointment() {
+    FocusScope.of(context).unfocus();
+
+    final appointment = _buildAppointment();
+
+    if (appointment.nic.isEmpty ||
+        appointment.patient.isEmpty ||
+        appointment.contact.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter NIC, full name and contact number.'),
+        ),
+      );
+      return;
     }
+
+    widget.onAppointmentConfirmed?.call(appointment);
+    _showConfirmed(appointment);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = [
+      _hospitals(),
+      _details(),
+      _patient(),
+      _confirm(),
+      _history(),
+    ];
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: switch (_step) {
@@ -359,73 +427,83 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     );
   }
 
-  // ---------- Screen 2: hospital list (Find Hospital wireframe) ----------
+  // ---------- Screen 2: hospital list ----------
+
   Widget _hospitals() {
-    return FindHospitalScreen(
-      isStandalone: false,
-      initialHospitalId: _hospitalId,
-      onBack: () {
-        if (_openedFromHome) {
-          widget.onBackToHome?.call();
-        } else {
-          _go(1);
-        }
-      },
-      onBookAppointment: (hospital) {
-        selectHospitalAndProceed(hospital);
-      },
-    );
-  }
+    const items = [
+      ('City General Hospital', 'OPD Open', Colors.green),
+      ('District Hospital', 'Full', Colors.red),
+      ('Teaching Hospital', '3 slots left', Colors.orange),
+    ];
 
-  void _showHospitalPicker() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        String filter = '';
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final filtered = _hospitalList.where((h) {
-              if (filter.trim().isEmpty) return true;
-              final q = filter.trim().toLowerCase();
-              return h.name.toLowerCase().contains(q) ||
-                  h.city.toLowerCase().contains(q) ||
-                  h.district.toLowerCase().contains(q);
-            }).toList();
-
-            return DraggableScrollableSheet(
-              expand: false,
-              initialChildSize: 0.65,
-              minChildSize: 0.35,
-              maxChildSize: 0.9,
-              builder: (_, scrollController) {
-                return Column(
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 10, bottom: 8),
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _header('Appointment Booking'),
+        const SizedBox(height: 12),
+        _search(),
+        const SizedBox(height: 14),
+        _label('HOSPITAL DETAILS'),
+        Row(
+          children: [
+            Expanded(child: _dropdown('Province')),
+            const SizedBox(width: 8),
+            Expanded(child: _dropdown('District')),
+            const SizedBox(width: 8),
+            Expanded(child: _dropdown('City')),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _label('HOSPITAL AVAILABILITY'),
+        Expanded(
+          child: ListView(
+            children: [
+              for (final h in items)
+                _card(
+                  onTap: () => _go(1),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Icon(
+                          Icons.local_hospital_outlined,
+                          size: 16,
+                          color: AppColors.primary300,
+                        ),
                       ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Select Hospital',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary500,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              h.$1,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary500,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.circle,
+                                  size: 8,
+                                  color: h.$3,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  h.$2,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.gray400,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           TextButton.icon(
@@ -467,130 +545,26 @@ class AppointmentsTabState extends State<AppointmentsTab> {
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? const Center(
-                              child: Text('No hospitals found',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.gray400)),
-                            )
-                          : ListView.separated(
-                              controller: scrollController,
-                              itemCount: filtered.length,
-                              separatorBuilder: (_, _) => const Divider(
-                                  height: 1, indent: 16, endIndent: 16),
-                              itemBuilder: (context, index) {
-                                final h = filtered[index];
-                                final isSelected = h.id == _hospitalId;
-                                return ListTile(
-                                  leading: Container(
-                                    width: 38,
-                                    height: 38,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primary100,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Icon(
-                                      Icons.local_hospital_rounded,
-                                      size: 20,
-                                      color: AppColors.primary300,
-                                    ),
-                                  ),
-                                  title: Text(
-                                    h.name,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: isSelected
-                                          ? FontWeight.bold
-                                          : FontWeight.w600,
-                                      color: AppColors.primary500,
-                                    ),
-                                  ),
-                                  subtitle: Row(
-                                    children: [
-                                      if (h.identificationNo.isNotEmpty) ...[
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 5, vertical: 1.5),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.primary100,
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            'Code: ${h.identificationNo}',
-                                            style: const TextStyle(
-                                              fontSize: 9.5,
-                                              fontWeight: FontWeight.bold,
-                                              color: AppColors.primary400,
-                                              letterSpacing: 0.3,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                      ],
-                                      if (h.city.isNotEmpty) ...[
-                                        Text(h.city,
-                                            style: const TextStyle(
-                                                fontSize: 11,
-                                                color: AppColors.gray400)),
-                                        const Text(' · ',
-                                            style: TextStyle(
-                                                color: AppColors.gray400)),
-                                      ],
-                                      Container(
-                                        width: 6,
-                                        height: 6,
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: h.color,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        h.label,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: h.color,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  trailing: isSelected
-                                      ? const Icon(Icons.check_circle,
-                                          color: AppColors.primary300)
-                                      : const Icon(Icons.chevron_right,
-                                          size: 18,
-                                          color: AppColors.gray400),
-                                  onTap: () {
-                                    if (h.isFull) {
-                                      _snack('${h.name} OPD is currently full.');
-                                      return;
-                                    }
-                                    Navigator.pop(ctx);
-                                    selectHospitalAndProceed(h);
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                );
-              },
-            );
-          },
-        );
-      },
+                      const Icon(
+                        Icons.chevron_right,
+                        color: AppColors.gray400,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        _primaryBtn(
+          'Book Appointment',
+          () => _go(1),
+        ),
+      ],
     );
   }
 
   // ---------- Screen 3: step 1 ----------
-  // ---------- Screen 3: step 1 ----------
+
   Widget _details() {
     final q = _doctorQuery.trim().toLowerCase();
     final docs = [
@@ -601,131 +575,80 @@ class AppointmentsTabState extends State<AppointmentsTab> {
             _doctorList[i].hospital.toLowerCase().contains(q))
           i,
     ];
+
     return Column(
       children: [
+        _header(
+          'Appointment Booking',
+          step: '1 / 3',
+        ),
+        const SizedBox(height: 12),
+        _search(),
+        const SizedBox(height: 14),
+        _label('APPOINTMENT DETAILS'),
+        _field(
+          'City General Hospital',
+          trailing: Icons.keyboard_arrow_down,
+        ),
+        const SizedBox(height: 8),
+        _field(
+          '22 Sep 2026',
+          leading: Icons.calendar_today_outlined,
+        ),
+        const SizedBox(height: 8),
+        _field(
+          'Morning',
+          trailing: Icons.keyboard_arrow_down,
+        ),
+        const SizedBox(height: 14),
+        _label('DOCTOR AVAILABILITY & QUEUE'),
         Expanded(
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              _header('Appointment Booking', step: '1 / 3'),
-              const SizedBox(height: 12),
-              _search((v) => setState(() => _doctorQuery = v),
-                  hint: 'Search doctor, speciality...'),
-              const SizedBox(height: 14),
-              _label('APPOINTMENT DETAILS'),
-              _field(_hospital ?? 'Select hospital',
-                  trailing: Icons.keyboard_arrow_down,
-                  onTap: _showHospitalPicker),
-              if (_hospital != null && _hospital!.isNotEmpty) ...[
-                Builder(
-                  builder: (context) {
-                    final hMatch = _hospitalList
-                        .where((h) => h.id == _hospitalId || h.name == _hospital)
-                        .firstOrNull;
-                    return Container(
-                      margin: const EdgeInsets.only(top: 4, bottom: 6),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: AppColors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: AppColors.primary300.withValues(alpha: 0.4),
-                          width: 1,
+              for (final d in doctors)
+                _card(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              d.$1,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary500,
+                              ),
+                            ),
+                            Text(
+                              d.$2,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.gray400,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F2F1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(Icons.local_hospital_rounded,
-                                size: 16, color: Color(0xFF007A78)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary100,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          d.$3,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary400,
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      _hospital!,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.primary500,
-                                      ),
-                                    ),
-                                    if (hMatch != null &&
-                                        hMatch.identificationNo.isNotEmpty) ...[
-                                      const SizedBox(width: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.primary100,
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          hMatch.identificationNo,
-                                          style: const TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.bold,
-                                            color: AppColors.primary400,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                if (hMatch != null &&
-                                    (hMatch.city.isNotEmpty ||
-                                        hMatch.province.isNotEmpty))
-                                  Text(
-                                    '${hMatch.city.isNotEmpty ? "${hMatch.city}, " : ""}${hMatch.province}',
-                                    style: const TextStyle(
-                                        fontSize: 10, color: AppColors.gray400),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          if (hMatch != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: hMatch.color.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: hMatch.color,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    hMatch.label,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: hMatch.color,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
+                        ),
                       ),
                     );
                   },
@@ -833,18 +756,10 @@ class AppointmentsTabState extends State<AppointmentsTab> {
             ],
           ),
         ),
-        const SizedBox(height: 8),
-        _primaryBtn('Next', () {
-          if (_doctorIdx == null) {
-            _snack('Please select a doctor');
-            return;
-          }
-          if (_hospital == null || _hospital!.isEmpty) {
-            _snack('Please select a hospital');
-            return;
-          }
-          _go(2);
-        }),
+        _primaryBtn(
+          'Next',
+          () => _go(2),
+        ),
       ],
     );
   }
@@ -1017,6 +932,7 @@ class AppointmentsTabState extends State<AppointmentsTab> {
   }
 
   // ---------- Screen 4: step 2 ----------
+
   Widget _patient() {
     final dobText = _dob == null
         ? 'Date of birth'
@@ -1024,172 +940,308 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('Appointment Booking', step: '2 / 3'),
+        _header(
+          'Appointment Booking',
+          step: '2 / 3',
+        ),
         const SizedBox(height: 12),
-        Expanded(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    height: 130,
-                    width: double.infinity,
-                    color: AppColors.primary200.withValues(alpha: 0.3),
-                    // Replace with Image.asset('assets/images/onboard_1.jpg', fit: BoxFit.cover)
-                    child: const Icon(Icons.medical_services_outlined,
-                        size: 48, color: AppColors.primary300),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _label('PATIENT DETAILS'),
-                Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary100,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: AppColors.primary300.withValues(alpha: 0.5)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.badge_outlined,
-                          size: 22, color: AppColors.primary300),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('PATIENT USER ID (DEFAULTED TO NIC)',
-                                style: TextStyle(
-                                    fontSize: 9,
-                                    color: AppColors.gray400,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 2),
-                            Text(
-                              _nic.text.trim().isNotEmpty
-                                  ? _nic.text.trim().toUpperCase()
-                                  : 'Auto-assigned from NIC number below',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: _nic.text.trim().isNotEmpty
-                                    ? AppColors.primary500
-                                    : AppColors.gray400,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _input(
-                  'NIC Number (User ID) *',
-                  _nic,
-                  _nicError,
-                  onChanged: (_) => setState(() {}),
-                ),
-                const SizedBox(height: 8),
-                _input('Full name', _name, _nameError),
-                const SizedBox(height: 8),
-                _field(dobText,
-                    leading: Icons.calendar_today_outlined, onTap: _pickDob),
-                if (_showErrors && _dobError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 12, top: 4),
-                    child: Text(_dobError!,
-                        style: const TextStyle(
-                            fontSize: 10, color: Colors.redAccent)),
-                  ),
-                const SizedBox(height: 8),
-                _input('Contact number', _contact, _contactError,
-                    keyboard: TextInputType.phone),
-              ],
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            height: 130,
+            width: double.infinity,
+            color: AppColors.primary200.withValues(alpha: 0.3),
+            // Replace with Image.asset(
+            //   'assets/images/onboard_1.jpg',
+            //   fit: BoxFit.cover,
+            // )
+            child: const Icon(
+              Icons.medical_services_outlined,
+              size: 48,
+              color: AppColors.primary300,
             ),
           ),
         ),
-        const SizedBox(height: 10),
-        _primaryBtn('Next', _submitPatient),
+        const SizedBox(height: 14),
+        _label('PATIENT DETAILS'),
+        _input(
+          'NIC number',
+          controller: _nicController,
+        ),
         const SizedBox(height: 8),
-        _outlineBtn('Back', () => _go(1)),
+        _input(
+          'Full name',
+          controller: _nameController,
+        ),
+        const SizedBox(height: 8),
+        _input(
+          'Date of birth',
+          controller: _dobController,
+        ),
+        const SizedBox(height: 8),
+        _input(
+          'Contact number',
+          controller: _contactController,
+          keyboard: TextInputType.phone,
+        ),
+        const Spacer(),
+        _primaryBtn(
+          'Next',
+          () => _go(3),
+        ),
+        const SizedBox(height: 8),
+        _outlineBtn(
+          'Back',
+          () => _go(1),
+        ),
       ],
     );
   }
 
   // ---------- Screen 5: step 3 ----------
+
   Widget _confirm() {
-    final hMatch = _hospitalList
-        .where((h) => h.id == _hospitalId || h.name == _hospital)
-        .firstOrNull;
+    final appointment = _buildAppointment();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('Appointment Booking', step: '3 / 3'),
+        _header(
+          'Appointment Booking',
+          step: '3 / 3',
+        ),
         const SizedBox(height: 12),
         _label('CONFIRM APPOINTMENT'),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(12),
-          ),
+        _card(
           child: Column(
             children: [
-              _row('Hospital', _hospital ?? '-'),
-              if (hMatch != null && hMatch.identificationNo.isNotEmpty)
-                _row('Hospital ID', hMatch.identificationNo),
-              _row('Date', _dateIso),
-              _row('Session', '$_session (${_sessions[_session]})'),
-              _row('Doctor', _doctorList[_doctorIdx ?? 0].name),
-              _row('Speciality', _doctorList[_doctorIdx ?? 0].speciality),
-              if (_doctorIdx != null &&
-                  _doctorList[_doctorIdx!].room != null &&
-                  _doctorList[_doctorIdx!].room!.isNotEmpty)
-                _row('Room', _doctorList[_doctorIdx!].room!),
-              _row('Patient User ID', _nic.text.trim().toUpperCase(),
-                  highlight: true),
-              _row('Patient Name', _name.text.trim()),
-              _row('NIC', _nic.text.trim().toUpperCase()),
-              _row('Contact', _contact.text.trim()),
-              _row('Est. Queue No.', _queueNo, highlight: true),
+              _row(
+                'Hospital',
+                appointment.hospital,
+              ),
+              _row(
+                'Date',
+                appointment.date,
+              ),
+              _row(
+                'Session',
+                appointment.session,
+              ),
+              _row(
+                'Doctor',
+                appointment.doctor,
+              ),
+              _row(
+                'Speciality',
+                appointment.speciality,
+              ),
+              _row(
+                'Patient',
+                appointment.patient.isEmpty
+                    ? 'Not entered'
+                    : appointment.patient,
+              ),
+              _row(
+                'NIC',
+                appointment.nic.isEmpty
+                    ? 'Not entered'
+                    : appointment.nic,
+              ),
+              _row(
+                'Contact',
+                appointment.contact.isEmpty
+                    ? 'Not entered'
+                    : appointment.contact,
+              ),
+              _row(
+                'Date of Birth',
+                appointment.dateOfBirth.isEmpty
+                    ? 'Not entered'
+                    : appointment.dateOfBirth,
+              ),
+              _row(
+                'Estimated Queue',
+                appointment.estimatedQueueNumber,
+                highlight: true,
+              ),
             ],
           ),
         ),
         const Spacer(),
-        _primaryBtn(_saving ? 'Saving...' : 'Confirm Appointment', _confirmBooking),
+        _primaryBtn(
+          'Confirm Appointment',
+          _confirmAppointment,
+        ),
         const SizedBox(height: 8),
-        _outlineBtn('Back', () => _go(2)),
+        _outlineBtn(
+          'Back',
+          () => _go(2),
+        ),
       ],
     );
   }
 
-  // ---------- Confirmed (full screen, no bottom nav) ----------
-  void _showConfirmed() {
-    final hMatch = _hospitalList
-        .where((h) => h.id == _hospitalId || h.name == _hospital)
-        .firstOrNull;
-    final hidText = (hMatch != null && hMatch.identificationNo.isNotEmpty)
-        ? ' [${hMatch.identificationNo}]'
-        : '';
+  // ---------- Screen 6: history ----------
+
+  Widget _history() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _header('My Appointments'),
+        const SizedBox(height: 12),
+        _label('UPCOMING APPOINTMENT'),
+        _card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.local_hospital_outlined,
+                      size: 18,
+                      color: AppColors.primary300,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      _hospital,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary500,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.statusWaitingBg,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: AppColors.statusWaitingBorder,
+                      ),
+                    ),
+                    child: const Text(
+                      'Waiting',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.statusWaitingText,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _row(
+                'Date',
+                _date,
+              ),
+              _row(
+                'Session',
+                _session,
+              ),
+              _row(
+                'Doctor',
+                _doctor,
+              ),
+              _row(
+                'Speciality',
+                _speciality,
+              ),
+              _row(
+                'Queue',
+                _queue,
+                highlight: true,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _label('APPOINTMENT HISTORY'),
+        Expanded(
+          child: ListView(
+            children: [
+              _card(
+                child: Column(
+                  children: [
+                    _row(
+                      'Hospital',
+                      'District Hospital',
+                    ),
+                    _row(
+                      'Date',
+                      '10 Aug 2026',
+                    ),
+                    _row(
+                      'Doctor',
+                      'Dr. R. Fernando',
+                    ),
+                    _row(
+                      'Status',
+                      'Completed',
+                    ),
+                  ],
+                ),
+              ),
+              _card(
+                child: Column(
+                  children: [
+                    _row(
+                      'Hospital',
+                      'Teaching Hospital',
+                    ),
+                    _row(
+                      'Date',
+                      '18 Jul 2026',
+                    ),
+                    _row(
+                      'Doctor',
+                      'Dr. M. Silva',
+                    ),
+                    _row(
+                      'Status',
+                      'Completed',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        _outlineBtn(
+          'Book New Appointment',
+          () => _go(0),
+        ),
+      ],
+    );
+  }
+
+  // ---------- Confirmation ----------
+
+  void _showConfirmed(CheckInAppointment appointment) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _ConfirmedScreen(
-          queue: '#${_two(_confirmedQueue)}',
+          queue: appointment.estimatedQueueNumber,
           summary:
-              '${_hospital ?? ''}$hidText · $_dateLabel\nPatient User ID: ${_nic.text.trim().toUpperCase()}',
+              '${appointment.hospital} • ${appointment.date} • ${appointment.doctor}',
           onViewAppointments: () {
             Navigator.of(context).pop();
-            _resetBooking();
-            _go(4);
+            setState(() => _step = 4);
           },
           onBackToHome: () {
             Navigator.of(context).pop();
-            _resetBooking();
-            _go(0);
             widget.onBackToHome?.call();
           },
         ),
@@ -1197,386 +1249,319 @@ class AppointmentsTabState extends State<AppointmentsTab> {
     );
   }
 
-  // ---------- Appointments history ----------
-  Widget _history() {
-    Color bg(String s) => switch (s.toLowerCase()) {
-          'pending' => const Color(0xFFFEF3C7),
-          'confirmed' || 'waiting' => const Color(0xFFD1FAE5),
-          'upcoming' => AppColors.primary100,
-          'completed' => Colors.green.shade50,
-          _ => Colors.red.shade50,
-        };
-    Color fg(String s) => switch (s.toLowerCase()) {
-          'pending' => const Color(0xFFB45309),
-          'confirmed' || 'waiting' => const Color(0xFF047857),
-          'upcoming' => AppColors.primary300,
-          'completed' => Colors.green.shade700,
-          _ => Colors.red.shade700,
-        };
-    String cap(String s) {
-      final lower = s.toLowerCase();
-      if (lower == 'pending') return 'Pending Confirmation';
-      if (lower == 'confirmed') return 'Confirmed';
-      return s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-    }
-    Widget msg(String t) => Center(
-        child: Text(t,
-            style: const TextStyle(fontSize: 12, color: AppColors.gray400)));
+  // ---------- Reusable widgets ----------
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _header('Appointments History'),
-        const SizedBox(height: 12),
-        Expanded(
-          child: StreamBuilder<List<AppointmentRecord>>(
-            stream: _historyStream,
-            builder: (context, snap) {
-              if (snap.hasError) return msg('Could not load appointments');
-              if (!snap.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final items = snap.data!;
-              if (items.isEmpty) return msg('No appointments yet');
-              return ListView(
-                children: [
-                  for (final a in items)
-                    _card(
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(a.hospitalName,
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.primary500)),
-                              ),
-                              if (a.hospitalIdentificationNo.isNotEmpty) ...[
-                                Container(
-                                  margin: const EdgeInsets.only(right: 6),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary100,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    a.hospitalIdentificationNo,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary400,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: bg(a.status),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(cap(a.status),
-                                    style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: fg(a.status))),
-                              ),
-                            ],
-                          ),
-                          if (a.userId.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary100,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  'Patient User ID: ${a.userId}',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primary400,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                          const Divider(height: 16),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(a.doctorName,
-                                        style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: AppColors.primary500)),
-                                    Text(a.dateLabel,
-                                        style: const TextStyle(
-                                            fontSize: 11,
-                                            color: AppColors.gray400)),
-                                  ],
-                                ),
-                              ),
-                              Text('Queue #${_two(a.queueNo)}',
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary500)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ---------- Shared widgets ----------
-  Widget _header(String title, {String? step}) {
+  Widget _header(
+    String title, {
+    String? step,
+  }) {
     return Row(
       children: [
         Expanded(
-          child: Text(title,
-              style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary400)),
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: AppColors.primary500,
+            ),
+          ),
         ),
         if (step != null)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 5,
+            ),
             decoration: BoxDecoration(
               color: AppColors.primary100,
-              border: Border.all(color: AppColors.primary200),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(20),
             ),
-            child: Text('Step $step',
-                style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary400)),
+            child: Text(
+              step,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary300,
+              ),
+            ),
           ),
       ],
     );
   }
 
-  Widget _label(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(t,
-            style: const TextStyle(
-                fontSize: 10,
+  Widget _label(String t) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        t,
+        style: const TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: AppColors.gray400,
+        ),
+      ),
+    );
+  }
+
+  Widget _search() {
+    return TextField(
+      decoration: InputDecoration(
+        hintText: 'Search clinic, hospital...',
+        hintStyle: const TextStyle(
+          fontSize: 12,
+          color: AppColors.gray400,
+        ),
+        prefixIcon: const Icon(
+          Icons.search,
+          size: 18,
+        ),
+        filled: true,
+        fillColor: AppColors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 10,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.primary300,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.primary300,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dropdown(String t) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.gray100,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              t,
+              style: const TextStyle(
+                fontSize: 11,
                 fontWeight: FontWeight.bold,
-                color: AppColors.gray400)),
-      );
-
-  Widget _search(ValueChanged<String> onChanged,
-          {String hint = 'Search clinic, hospital...'}) =>
-      TextField(
-        onChanged: onChanged,
-        style: const TextStyle(fontSize: 12),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
-          prefixIcon: const Icon(Icons.search, size: 18),
-          filled: true,
-          fillColor: AppColors.white,
-          contentPadding: const EdgeInsets.symmetric(vertical: 10),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: AppColors.primary300),
+              ),
+            ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: AppColors.primary300),
+          const Icon(
+            Icons.arrow_downward,
+            size: 12,
           ),
-        ),
-      );
+        ],
+      ),
+    );
+  }
 
-  Widget _drop({
-    required String hint,
-    required String? value,
-    required List<String> items,
-    required ValueChanged<String?> onChanged,
-    bool bordered = false,
-  }) =>
-      Container(
-        padding: EdgeInsets.symmetric(horizontal: bordered ? 12 : 8),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(bordered ? 10 : 8),
-          border: Border.all(
-              color: bordered ? AppColors.primary300 : AppColors.gray100),
+  Widget _field(
+    String t, {
+    IconData? leading,
+    IconData? trailing,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 13,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: AppColors.primary300,
         ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: value,
-            isExpanded: true,
-            itemHeight: 48,
-            hint: Text(hint,
-                style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.gray400)),
-            icon: const Icon(Icons.keyboard_arrow_down, size: 18),
-            style: TextStyle(
-                fontSize: bordered ? 12 : 11,
+      ),
+      child: Row(
+        children: [
+          if (leading != null) ...[
+            Icon(
+              leading,
+              size: 16,
+              color: AppColors.primary300,
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              t,
+              style: const TextStyle(
+                fontSize: 12,
                 fontWeight: FontWeight.bold,
-                color: AppColors.primary500),
-            items: [
-              for (final i in items)
-                DropdownMenuItem(
-                    value: i, child: Text(i, overflow: TextOverflow.ellipsis)),
-            ],
-            onChanged: items.isEmpty ? null : onChanged,
+                color: AppColors.primary500,
+              ),
+            ),
+          ),
+          if (trailing != null)
+            Icon(
+              trailing,
+              size: 18,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _input(
+    String hint, {
+    TextEditingController? controller,
+    TextInputType? keyboard,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboard,
+      style: const TextStyle(
+        fontSize: 12,
+      ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(
+          fontSize: 12,
+          color: AppColors.gray400,
+        ),
+        filled: true,
+        fillColor: AppColors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.primary300,
           ),
         ),
-      );
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.primary300,
+          ),
+        ),
+      ),
+    );
+  }
 
-  Widget _field(String t,
-          {IconData? leading, IconData? trailing, VoidCallback? onTap}) =>
-      InkWell(
+  Widget _card({
+    required Widget child,
+    VoidCallback? onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: AppColors.white,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.primary300),
-          ),
-          child: Row(
-            children: [
-              if (leading != null) ...[
-                Icon(leading, size: 16, color: AppColors.primary300),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                  child: Text(t,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary500))),
-              if (trailing != null) Icon(trailing, size: 18),
-            ],
-          ),
-        ),
-      );
-
-  Widget _input(String hint, TextEditingController controller, String? error,
-          {TextInputType? keyboard, ValueChanged<String>? onChanged}) =>
-      TextField(
-        controller: controller,
-        keyboardType: keyboard,
-        style: const TextStyle(fontSize: 12),
-        onChanged: (v) {
-          onChanged?.call(v);
-          if (_showErrors) setState(() {});
-        },
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray400),
-          errorText: _showErrors ? error : null,
-          errorStyle: const TextStyle(fontSize: 10),
-          filled: true,
-          fillColor: AppColors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: AppColors.primary300),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: AppColors.primary300),
-          ),
-        ),
-      );
-
-  Widget _card(
-          {required Widget child, VoidCallback? onTap, bool selected = false}) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: selected ? AppColors.primary300 : AppColors.gray100,
-                  width: selected ? 1.5 : 1),
+            border: Border.all(
+              color: AppColors.gray100,
             ),
-            child: child,
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _row(
+    String k,
+    String v, {
+    bool highlight = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        vertical: 6,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            k,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.gray400,
+            ),
+          ),
+          Text(
+            v,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: highlight
+                  ? AppColors.primary300
+                  : AppColors.primary500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _primaryBtn(
+    String t,
+    VoidCallback onTap,
+  ) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary300,
+          foregroundColor: AppColors.white,
+          padding: const EdgeInsets.symmetric(
+            vertical: 14,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
           ),
         ),
-      );
+        child: Text(t),
+      ),
+    );
+  }
 
-  Widget _row(String k, String v, {bool highlight = false}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(k,
-                style: const TextStyle(fontSize: 11, color: AppColors.gray400)),
-            Text(v,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: highlight
-                        ? AppColors.primary300
-                        : AppColors.primary500)),
-          ],
-        ),
-      );
-
-  Widget _primaryBtn(String t, VoidCallback onTap) => SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: onTap,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primary300,
-            foregroundColor: AppColors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30)),
+  Widget _outlineBtn(
+    String t,
+    VoidCallback onTap,
+  ) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary300,
+          side: const BorderSide(
+            color: AppColors.primary300,
           ),
-          child: Text(t),
-        ),
-      );
-
-  Widget _outlineBtn(String t, VoidCallback onTap) => SizedBox(
-        width: double.infinity,
-        child: OutlinedButton(
-          onPressed: onTap,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.primary300,
-            side: const BorderSide(color: AppColors.primary300),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30)),
+          padding: const EdgeInsets.symmetric(
+            vertical: 14,
           ),
-          child: Text(t),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
         ),
-      );
+        child: Text(t),
+      ),
+    );
+  }
 }
-
 
 class _ConfirmedScreen extends StatelessWidget {
   final String queue;
@@ -1656,8 +1641,10 @@ class _ConfirmedScreen extends StatelessWidget {
                       color: Color(0xFFD97706))),
               const SizedBox(height: 14),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.white,
                   borderRadius: BorderRadius.circular(16),
@@ -1686,12 +1673,19 @@ class _ConfirmedScreen extends StatelessWidget {
                   onPressed: onViewAppointments,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.primary300,
-                    side: const BorderSide(color: AppColors.primary300),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(
+                      color: AppColors.primary300,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 14,
+                    ),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30)),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
                   ),
-                  child: const Text('View My Appointments'),
+                  child: const Text(
+                    'View My Appointments',
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
@@ -1702,11 +1696,16 @@ class _ConfirmedScreen extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary300,
                     foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 14,
+                    ),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30)),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
                   ),
-                  child: const Text('Back to Home'),
+                  child: const Text(
+                    'Back to Home',
+                  ),
                 ),
               ),
             ],
