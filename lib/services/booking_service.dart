@@ -1496,4 +1496,4 @@ class BookingService {
       debugPrint('BookingService.seedIfEmpty skipped or failed: $e');
     }
   }
-}
+}

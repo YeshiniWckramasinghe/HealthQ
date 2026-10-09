@@ -1,6 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../firebase_options.dart';
 import 'booking_service.dart';
@@ -152,31 +150,6 @@ class StaffModel {
   }
 }
 
-class StaffAuthResult {
-  final bool success;
-  final StaffModel? staff;
-  final String? errorMessage;
-  final bool isPermissionDenied;
-
-  const StaffAuthResult({
-    required this.success,
-    this.staff,
-    this.errorMessage,
-    this.isPermissionDenied = false,
-  });
-
-  factory StaffAuthResult.ok(StaffModel staff) =>
-      StaffAuthResult(success: true, staff: staff);
-
-  factory StaffAuthResult.fail(String error,
-          {bool isPermissionDenied = false}) =>
-      StaffAuthResult(
-        success: false,
-        errorMessage: error,
-        isPermissionDenied: isPermissionDenied,
-      );
-}
-
 class StaffAuthService {
   static final StaffAuthService instance = StaffAuthService._();
   StaffAuthService._();
@@ -193,135 +166,49 @@ class StaffAuthService {
   /// Ensure Firebase is ready and attempt anonymous auth if not logged in
   Future<void> _prepareFirebaseSession() async {
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
+      final staffRef = FirebaseFirestore.instance.collection('staff');
+      for (final staff in _defaultStaff) {
+        final doc = await staffRef.doc(staff['staffId']).get();
+        if (!doc.exists) {
+          await staffRef.doc(staff['staffId']).set({
+            ...staff,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('Seeded staff member: ${staff['staffId']} (${staff['role']})');
+        }
       }
     } catch (e) {
-      debugPrint('Firebase initialization check: $e');
-    }
-
-    // If unauthenticated, try signing in anonymously so request.auth != null
-    // in case Firestore rules require authenticated requests.
-    if (FirebaseAuth.instance.currentUser == null) {
-      try {
-        await FirebaseAuth.instance.signInAnonymously();
-        debugPrint(
-            'Signed in anonymously for staff session: ${FirebaseAuth.instance.currentUser?.uid}');
-      } catch (authError) {
-        // Safe to ignore if anonymous sign-in is disabled in Firebase console
-        debugPrint('Anonymous auth attempt note: $authError');
-      }
+      debugPrint('Staff seed note: $e');
     }
   }
 
-  /// Fetch hospital names dynamically from Firestore 'hospitals' collection
-  Future<List<String>> fetchHospitals() async {
-    await _prepareFirebaseSession();
-    try {
-      final snapshot = await _db
-          .collection('hospitals')
-          .get()
-          .timeout(const Duration(seconds: 8));
-      if (snapshot.docs.isNotEmpty) {
-        final list = snapshot.docs.map((doc) {
-          final data = doc.data();
-          final name = data['name'] ?? data['hospitalName'] ?? doc.id;
-          return name.toString().trim();
-        }).where((n) => n.isNotEmpty).toSet().toList();
-        list.sort();
-        return list;
-      }
-    } catch (e) {
-      debugPrint('Error fetching hospitals from database: $e');
-    }
-    return [];
-  }
-
-  /// Authenticate staff member strictly against Cloud Firestore 'staff' collection.
-  Future<StaffAuthResult> authenticateStaff({
+  /// Authenticate staff member by hospital, staffId, password, and role
+  Future<StaffModel?> authenticateStaff({
     required String hospital,
     required String staffId,
     required String password,
     required String role,
   }) async {
-    final cleanStaffId = staffId.trim();
+    final cleanStaffId = staffId.trim().toUpperCase();
     final cleanRole = role.trim().toLowerCase();
     final cleanPassword = password.trim();
 
-    if (cleanStaffId.isEmpty || cleanPassword.isEmpty) {
-      return StaffAuthResult.fail('Please enter both Staff ID and Password.');
-    }
-
-    await _prepareFirebaseSession();
-
+    // 1. Try querying Firestore 'staff' collection
     try {
-      final staffRef = _db.collection('staff');
-      DocumentSnapshot<Map<String, dynamic>>? targetDoc;
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('staff')
+          .where('staffId', isEqualTo: cleanStaffId)
+          .where('role', isEqualTo: cleanRole)
+          .limit(1)
+          .get();
 
-      // 1. Direct document ID lookup (handles document ID matching staff ID)
-      try {
-        final directDocUpper = await staffRef
-            .doc(cleanStaffId.toUpperCase())
-            .get()
-            .timeout(const Duration(seconds: 10));
-        if (directDocUpper.exists && directDocUpper.data() != null) {
-          targetDoc = directDocUpper;
-        } else {
-          final directDoc = await staffRef
-              .doc(cleanStaffId)
-              .get()
-              .timeout(const Duration(seconds: 10));
-          if (directDoc.exists && directDoc.data() != null) {
-            targetDoc = directDoc;
-          }
-        }
-      } catch (e) {
-        if (_isPermissionDeniedError(e)) rethrow;
-        debugPrint('Direct doc lookup note: $e');
-      }
+      if (querySnapshot.docs.isNotEmpty) {
+        final data = querySnapshot.docs.first.data();
+        final dbPassword = (data['password'] ?? '').toString();
 
-      // 2. Query by 'staffId' field (uppercase or exact)
-      if (targetDoc == null) {
-        try {
-          final qUpper = await staffRef
-              .where('staffId', isEqualTo: cleanStaffId.toUpperCase())
-              .limit(1)
-              .get()
-              .timeout(const Duration(seconds: 10));
-          if (qUpper.docs.isNotEmpty) {
-            targetDoc = qUpper.docs.first;
-          } else {
-            final qExact = await staffRef
-                .where('staffId', isEqualTo: cleanStaffId)
-                .limit(1)
-                .get()
-                .timeout(const Duration(seconds: 10));
-            if (qExact.docs.isNotEmpty) {
-              targetDoc = qExact.docs.first;
-            }
-          }
-        } catch (e) {
-          if (_isPermissionDeniedError(e)) rethrow;
-          debugPrint('StaffId query note: $e');
-        }
-      }
-
-      // 3. Query by 'email' field if user entered an email address
-      if (targetDoc == null && cleanStaffId.contains('@')) {
-        try {
-          final qEmail = await staffRef
-              .where('email', isEqualTo: cleanStaffId.toLowerCase())
-              .limit(1)
-              .get()
-              .timeout(const Duration(seconds: 10));
-          if (qEmail.docs.isNotEmpty) {
-            targetDoc = qEmail.docs.first;
-          }
-        } catch (e) {
-          if (_isPermissionDeniedError(e)) rethrow;
-          debugPrint('Email query note: $e');
+        if (dbPassword == cleanPassword) {
+          return StaffModel.fromMap(data);
         }
       }
 
@@ -366,29 +253,27 @@ class StaffAuthService {
       return StaffAuthResult.ok(staffModel);
     } catch (e) {
       debugPrint('Firestore staff auth error: $e');
-      if (_isPermissionDeniedError(e)) {
-        return StaffAuthResult.fail(
-          'Firestore Permission Denied: Cloud Firestore security rules in Firebase Console are blocking unauthenticated reads for the "staff" collection.',
-          isPermissionDenied: true,
-        );
-      } else if (e.toString().contains('TimeoutException')) {
-        return StaffAuthResult.fail(
-          'Database request timed out. Please check your internet connection and try again.',
-        );
-      }
-      return StaffAuthResult.fail(
-        'Database connection error: $e',
-      );
     }
+
+    // 2. Fallback check against in-memory defaults
+    for (final staff in _defaultStaff) {
+      final matchId = (staff['staffId'] as String).toUpperCase() == cleanStaffId ||
+          (staff['email'] as String).toLowerCase() == staffId.trim().toLowerCase();
+      final matchRole = (staff['role'] as String).toLowerCase() == cleanRole;
+      final matchPass = (staff['password'] as String) == cleanPassword;
+
+      if (matchId && matchRole && matchPass) {
+        return StaffModel.fromMap(staff);
+      }
+    }
+
+    return null;
   }
 
-  /// Find staff member by Staff ID or Email strictly in Cloud Firestore
+  /// Find staff member by Staff ID or Email
   Future<StaffModel?> findStaff(String staffIdOrEmail) async {
-    final cleanInput = staffIdOrEmail.trim();
-    if (cleanInput.isEmpty) return null;
-
-    await _prepareFirebaseSession();
-    final staffRef = _db.collection('staff');
+    final cleanInput = staffIdOrEmail.trim().toUpperCase();
+    final staffRef = FirebaseFirestore.instance.collection('staff');
 
     try {
       StaffModel? found;
@@ -442,74 +327,43 @@ class StaffAuthService {
       debugPrint('Firestore find staff error: $e');
     }
 
+    // Fallback search in memory
+    for (final staff in _defaultStaff) {
+      if ((staff['staffId'] as String).toUpperCase() == cleanInput ||
+          (staff['email'] as String).toLowerCase() == staffIdOrEmail.trim().toLowerCase()) {
+        return StaffModel.fromMap(staff);
+      }
+    }
+
     return null;
   }
 
-  /// Update password for staff member strictly in Cloud Firestore
+  /// Update password for staff member in database
   Future<bool> updatePassword({
     required String staffIdOrEmail,
     required String newPassword,
   }) async {
-    final cleanInput = staffIdOrEmail.trim();
-    if (cleanInput.isEmpty) return false;
-
-    await _prepareFirebaseSession();
-    final staffRef = _db.collection('staff');
+    final cleanInput = staffIdOrEmail.trim().toUpperCase();
 
     try {
-      // 1. Direct doc lookup
-      final docUpper = await staffRef.doc(cleanInput.toUpperCase()).get();
-      if (docUpper.exists) {
-        await docUpper.reference.update({
-          'password': newPassword.trim(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        return true;
-      }
+      // Find staff doc
+      final staffRef = FirebaseFirestore.instance.collection('staff');
+      QuerySnapshot<Map<String, dynamic>> snapshot;
 
-      final docDirect = await staffRef.doc(cleanInput).get();
-      if (docDirect.exists) {
-        await docDirect.reference.update({
-          'password': newPassword.trim(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        return true;
-      }
-
-      // 2. Query by email
       if (cleanInput.contains('@')) {
-        final snap = await staffRef
-            .where('email', isEqualTo: cleanInput.toLowerCase())
+        snapshot = await staffRef
+            .where('email', isEqualTo: staffIdOrEmail.trim().toLowerCase())
             .limit(1)
             .get();
-        if (snap.docs.isNotEmpty) {
-          await snap.docs.first.reference.update({
-            'password': newPassword.trim(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          return true;
-        }
+      } else {
+        snapshot = await staffRef
+            .where('staffId', isEqualTo: cleanInput)
+            .limit(1)
+            .get();
       }
 
-      // 3. Query by staffId field
-      final snapUpper = await staffRef
-          .where('staffId', isEqualTo: cleanInput.toUpperCase())
-          .limit(1)
-          .get();
-      if (snapUpper.docs.isNotEmpty) {
-        await snapUpper.docs.first.reference.update({
-          'password': newPassword.trim(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        return true;
-      }
-
-      final snap = await staffRef
-          .where('staffId', isEqualTo: cleanInput)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) {
-        await snap.docs.first.reference.update({
+      if (snapshot.docs.isNotEmpty) {
+        await snapshot.docs.first.reference.update({
           'password': newPassword.trim(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
@@ -519,8 +373,14 @@ class StaffAuthService {
       debugPrint('Firestore update password error: $e');
     }
 
-    return false;
-  }
+    // Fallback update in local memory
+    for (final staff in _defaultStaff) {
+      if ((staff['staffId'] as String).toUpperCase() == cleanInput ||
+          (staff['email'] as String).toLowerCase() == staffIdOrEmail.trim().toLowerCase()) {
+        staff['password'] = newPassword.trim();
+        return true;
+      }
+    }
 
   /// Update profile photo (Base64 or URL) for staff member in Cloud Firestore
   Future<bool> updateStaffProfilePhoto({

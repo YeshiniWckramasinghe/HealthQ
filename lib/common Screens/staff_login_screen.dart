@@ -21,7 +21,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   bool _obscurePassword = true;
   bool _isLoading = false;
 
-  List<String> _hospitals = [
+  final List<String> _hospitals = const [
     'Government Hospital — Colombo',
     'National Hospital of Sri Lanka',
     'Colombo South Teaching Hospital',
@@ -32,20 +32,10 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Controllers start empty — requiring real database staff credentials
-    _loadHospitalsFromDatabase();
-  }
-
-  Future<void> _loadHospitalsFromDatabase() async {
-    final dbHospitals = await StaffAuthService.instance.fetchHospitals();
-    if (mounted && dbHospitals.isNotEmpty) {
-      setState(() {
-        _hospitals = dbHospitals;
-        if (!_hospitals.contains(_selectedHospital)) {
-          _selectedHospital = _hospitals.first;
-        }
-      });
-    }
+    // Seed staff into Firestore in background if not already seeded
+    StaffAuthService.instance.seedDefaultStaffIfNeeded();
+    _staffIdController.text = 'DOC1001-0001';
+    _passwordController.text = 'Password123!';
   }
 
   @override
@@ -60,7 +50,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final result = await StaffAuthService.instance.authenticateStaff(
+      final staff = await StaffAuthService.instance.authenticateStaff(
         hospital: _selectedHospital,
         staffId: _staffIdController.text.trim(),
         password: _passwordController.text,
@@ -69,22 +59,19 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
 
       if (!mounted) return;
 
-      if (result.success && result.staff != null) {
-        // Open page displaying real database data for that staff member
+      if (staff != null) {
+        // Open page to display that data for that staff person
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => StaffProfileConfirmScreen(staff: result.staff!),
+            builder: (_) => StaffProfileConfirmScreen(staff: staff),
           ),
         );
-      } else if (result.isPermissionDenied) {
-        _showPermissionDeniedDialog(result.errorMessage ?? 'Permission Denied');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.red.shade700,
             content: Text(
-              result.errorMessage ??
-                  'Staff member not registered in database. Please check your credentials.',
+              'Employee not registered in database or invalid credentials for $_selectedRole. Please check your Staff ID and Password.',
             ),
             duration: const Duration(seconds: 4),
           ),
@@ -166,19 +153,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                     color: AppColors.primary500,
                   ),
                 ),
-                const SizedBox(height: 8),
-
-                // NOTICE: Database Authentication
-                const Text(
-                  'Direct database authentication for hospital medical officers and nursing staff.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.gray500,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 28),
 
                 // ================= SELECT HOSPITAL =================
                 _buildFieldLabel('SELECT HOSPITAL'),
@@ -193,9 +168,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       isExpanded: true,
-                      value: _hospitals.contains(_selectedHospital)
-                          ? _selectedHospital
-                          : _hospitals.first,
+                      value: _selectedHospital,
                       icon: const Icon(
                         Icons.keyboard_arrow_down,
                         color: AppColors.gray500,
@@ -223,19 +196,19 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 const SizedBox(height: 18),
 
                 // ================= STAFF ID =================
-                _buildFieldLabel('STAFF ID / OFFICIAL EMAIL'),
+                _buildFieldLabel('STAFF ID'),
                 const SizedBox(height: 8),
                 TextFormField(
                   controller: _staffIdController,
                   autovalidateMode: AutovalidateMode.onUserInteraction,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) {
-                      return 'Staff ID or email is required';
+                      return 'Staff ID is required';
                     }
                     return null;
                   },
                   decoration: _inputDecoration(
-                    hintText: 'e.g. DOC-1001, NUR-2001 or staff@hospital.lk',
+                    hintText: 'e.g. DOC1001-0001 or NUR1002-0011',
                     icon: Icons.badge_outlined,
                   ),
                 ),
@@ -253,7 +226,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                     return null;
                   },
                   decoration: _inputDecoration(
-                    hintText: 'Enter your password',
+                    hintText: '••••••••••••',
                     icon: Icons.lock_outline,
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -325,7 +298,16 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                       ],
                       onChanged: (val) {
                         if (val != null) {
-                          setState(() => _selectedRole = val);
+                          setState(() {
+                            _selectedRole = val;
+                            if (val == 'Doctor' &&
+                                _staffIdController.text.startsWith('NUR')) {
+                              _staffIdController.text = 'DOC1001-0001';
+                            } else if (val == 'Nurse' &&
+                                _staffIdController.text.startsWith('DOC')) {
+                              _staffIdController.text = 'NUR1002-0011';
+                            }
+                          });
                         }
                       },
                     ),
@@ -472,63 +454,4 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
       ),
     );
   }
-
-  void _showPermissionDeniedDialog(String message) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.shield_outlined, color: Colors.orange, size: 28),
-            SizedBox(width: 10),
-            Text('Firestore Security Rules', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Your Cloud Firestore database has data, but the security rules are blocking unauthenticated reads for the "staff" collection.',
-              style: TextStyle(fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'To allow hospital staff to sign in with their database record, update your Firestore Security Rules in Firebase Console:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0F5F5),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFCFDFE0)),
-              ),
-              child: const SelectableText(
-                'rules_version = \'2\';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/{userId} {\n      allow read, write: if true;\n    }\n    match /staff/{staffId} {\n      allow read, write: if true;\n    }\n    match /hospitals/{hospitalId} {\n      allow read, write: if true;\n    }\n    match /appointments/{appointmentId} {\n      allow read, write: if true;\n    }\n    match /queues/{queueId} {\n      allow read, write: if true;\n    }\n    match /{document=**} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: Color(0xFF007A78),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF007A78),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Got it'),
-          ),
-        ],
-      ),
-    );
-  }
 }
-

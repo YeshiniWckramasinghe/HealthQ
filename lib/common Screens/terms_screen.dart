@@ -36,9 +36,9 @@ class TermsScreen extends StatelessWidget {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => DoctorDashboardScreen(
-            doctorName: staffData?['name'] ?? 'Doctor',
-            staffId: staffData?['staffId'] ?? '',
-            hospital: staffData?['hospital'] ?? 'Hospital',
+            doctorName: staffData?['name'] ?? 'Dr. S. Perera',
+            staffId: staffData?['staffId'] ?? 'DOC1001-0001',
+            hospital: staffData?['hospital'] ?? 'Government Hospital — Colombo',
           ),
         ),
         (route) => false,

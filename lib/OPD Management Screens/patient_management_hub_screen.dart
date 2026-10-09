@@ -211,23 +211,12 @@ class _PatientManagementHubScreenState
       backgroundColor: OpdColors.primary100,
       body: Column(
         children: [
-          // Header banner with hospital corridor photo and Live Updated Avatar (identical to Home banner)
-          OpdHeaderBanner(
-            title: _nurseName != null && _nurseName!.isNotEmpty
-                ? 'Good Morning, $_nurseName'
-                : (widget.nurseName != null && widget.nurseName!.isNotEmpty
-                    ? 'Good Morning, ${widget.nurseName}'
-                    : 'Good Morning, Nurse'),
-            nurseId: widget.nurseId != null && widget.nurseId!.isNotEmpty
-                ? 'ID: ${widget.nurseId}'
-                : (StaffAuthService.instance.currentStaff?.staffId != null
-                    ? 'ID: ${StaffAuthService.instance.currentStaff!.staffId}'
-                    : 'Staff Nurse'),
-            department: _nurseDepartment ?? widget.department ?? 'General Medicine OPD',
-            hospital: _effectiveHospitalDisplay,
-            photoBase64: _nursePhotoBase64,
-            photoUrl: _nursePhotoUrl,
-            onAvatarTap: _openNurseProfile,
+          // Header banner with hospital corridor photo
+          const OpdHeaderBanner(
+            title: 'Patient Management',
+            nurseId: 'ID: NUR1002-021',
+            department: 'General Medicine OPD',
+            hospital: 'Government Hospital — Colombo',
           ),
 
           // Content

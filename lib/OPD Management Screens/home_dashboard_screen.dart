@@ -322,14 +322,38 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     : 'Good Morning, Nurse'),
             nurseId: widget.nurseId != null && widget.nurseId!.isNotEmpty
                 ? 'ID: ${widget.nurseId}'
-                : (StaffAuthService.instance.currentStaff?.staffId != null
-                    ? 'ID: ${StaffAuthService.instance.currentStaff!.staffId}'
-                    : 'Staff Nurse'),
-            department: _nurseDepartment ?? widget.department ?? 'General Medicine OPD',
-            hospital: _effectiveHospitalDisplay,
-            photoBase64: _nursePhotoBase64,
-            photoUrl: _nursePhotoUrl,
-            onAvatarTap: _openNurseProfile,
+                : 'ID: NUR1002-0011',
+            department: widget.department ?? 'General Medicine OPD',
+            hospital: widget.hospital ?? 'Government Hospital — Colombo',
+            onAvatarTap: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Sign Out'),
+                  content: const Text('Are you sure you want to sign out of the Nurse Portal?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          (route) => false,
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: OpdColors.primary400,
+                        foregroundColor: OpdColors.white,
+                      ),
+                      child: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
 
           // Main body content

@@ -14,11 +14,9 @@ class OpdHeaderBanner extends StatelessWidget {
   const OpdHeaderBanner({
     super.key,
     required this.title,
-    this.nurseId = 'Staff Nurse',
-    this.department = 'General OPD',
-    this.hospital = 'Hospital',
-    this.photoBase64,
-    this.photoUrl,
+    this.nurseId = 'ID: NUR1002-021',
+    this.department = 'General Medicine OPD',
+    this.hospital = 'Government Hospital — Colombo',
     this.onAvatarTap,
   });
 
