@@ -18,7 +18,7 @@ import 'package:flutter/foundation.dart';
 //   doctorId, doctorName, hospital, slotId, date, startTime, endTime,
 //   currentStatus, requestedStatus, reason,
 //   status 'pending' | 'approved' | 'rejected' | 'cancelled',
-//   submittedAt, reviewedAt?, reviewedBy?, reviewerNote?
+//   submittedAt, editedAt?, reviewedAt?, reviewedBy?, reviewerNote?
 //
 // The hospital-staff side can approve / reject with [resolveRequest].
 // ---------------------------------------------------------------------------
@@ -120,6 +120,7 @@ class AvailabilityRequest {
   /// 'pending' | 'approved' | 'rejected' | 'cancelled'.
   final String status;
   final DateTime submittedAt;
+  final DateTime? editedAt; // set when the doctor edits a pending request
   final DateTime? reviewedAt;
   final String? reviewedBy;
   final String? reviewerNote;
@@ -138,6 +139,7 @@ class AvailabilityRequest {
     required this.reason,
     required this.status,
     required this.submittedAt,
+    this.editedAt,
     this.reviewedAt,
     this.reviewedBy,
     this.reviewerNote,
@@ -160,6 +162,7 @@ class AvailabilityRequest {
       reason: _s(m['reason'], '-'),
       status: _s(m['status'], 'pending'),
       submittedAt: _ts(m['submittedAt']) ?? DateTime.now(),
+      editedAt: _ts(m['editedAt']),
       reviewedAt: _ts(m['reviewedAt']),
       reviewedBy: _opt(m['reviewedBy']),
       reviewerNote: _opt(m['reviewerNote']),
@@ -398,6 +401,78 @@ class DoctorAvailabilityService {
             'requestId': FieldValue.delete(),
           });
         }
+      }
+    });
+  }
+
+  /// Doctor edits a request that is still pending: the reason, the requested
+  /// status and/or the time slot. Everything happens in ONE transaction so the
+  /// request and the slot flags can never drift apart:
+  ///  * same slot  -> the request + that slot's `requestedStatus` are updated
+  ///  * moved slot -> the new slot is flagged pending, the old slot is cleared
+  /// The slot's effective `status` is never touched here (only approval does).
+  Future<void> updateRequest({
+    required AvailabilityRequest request,
+    required DoctorAvailabilitySlot slot,
+    required String requestedStatus,
+    required String reason,
+  }) async {
+    final reqRef = _db.collection(_requestsCol).doc(request.id);
+    final oldSlotRef = _db.collection(_slotsCol).doc(request.slotId);
+    final newSlotRef = _db.collection(_slotsCol).doc(slot.id);
+    final moved = slot.id != request.slotId;
+    final cleanReason = reason.trim();
+
+    await _db.runTransaction<void>((tx) async {
+      // ---- reads (Firestore requires every read before the first write)
+      final reqSnap = await tx.get(reqRef);
+      if (!reqSnap.exists) throw Exception('This request no longer exists.');
+      final live = AvailabilityRequest.fromDoc(reqSnap);
+      if (!live.isPending) {
+        throw Exception(
+            'Only pending requests can be edited. This one is already ${live.status}.');
+      }
+
+      final newSnap = await tx.get(newSlotRef);
+      if (!newSnap.exists) throw Exception('This time slot no longer exists.');
+      final fresh = DoctorAvailabilitySlot.fromDoc(newSnap);
+      if (moved && fresh.hasOpenRequest) {
+        throw Exception('A change request for that slot is already pending.');
+      }
+      if (fresh.status == requestedStatus) {
+        throw Exception(
+            'This slot is already marked as ${requestedStatus == 'available' ? 'Available' : 'Unavailable'}.');
+      }
+
+      DoctorAvailabilitySlot? old;
+      if (moved) {
+        final oldSnap = await tx.get(oldSlotRef);
+        if (oldSnap.exists) old = DoctorAvailabilitySlot.fromDoc(oldSnap);
+      }
+
+      // ---- writes
+      tx.update(reqRef, <String, dynamic>{
+        'slotId': slot.id,
+        'date': slot.date,
+        'startTime': slot.startTime,
+        'endTime': slot.endTime,
+        'currentStatus': fresh.status,
+        'requestedStatus': requestedStatus,
+        'reason': cleanReason,
+        'editedAt': FieldValue.serverTimestamp(),
+      });
+      tx.update(newSlotRef, <String, dynamic>{
+        'requestStatus': 'pending',
+        'requestedStatus': requestedStatus,
+        'requestId': request.id,
+        if (moved) 'requestedAt': FieldValue.serverTimestamp(),
+      });
+      if (old != null && old.requestId == request.id) {
+        tx.update(oldSlotRef, <String, dynamic>{
+          'requestStatus': 'none',
+          'requestedStatus': FieldValue.delete(),
+          'requestId': FieldValue.delete(),
+        });
       }
     });
   }

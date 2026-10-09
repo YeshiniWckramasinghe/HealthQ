@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/doctor_service.dart';
+import 'doctor_attachment_widgets.dart';
 import 'doctor_ui.dart';
 
 class DoctorConsultationScreen extends StatefulWidget {
@@ -428,6 +429,14 @@ class _DoctorConsultationScreenState extends State<DoctorConsultationScreen> {
                     maxLines: 8,
                     readOnly: _readOnly,
                   ),
+                ),
+                const SizedBox(height: 14),
+
+                // ── Attachments (X-rays, PDFs, reports) ─────────────
+                ConsultationAttachmentsSection(
+                  appointment: a,
+                  doctorId: DoctorSessionScope.of(context).profile.staffId,
+                  readOnly: _readOnly,
                 ),
 
                 // ── Complete ────────────────────────────────────────

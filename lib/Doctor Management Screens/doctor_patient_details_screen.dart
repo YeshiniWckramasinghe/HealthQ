@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/doctor_patient_service.dart';
 import '../services/doctor_service.dart';
+import 'doctor_attachment_widgets.dart';
 import 'doctor_consultation_screen.dart';
 import 'doctor_ui.dart';
 
@@ -520,21 +521,28 @@ class _HistoryTab extends StatelessWidget {
         StreamBuilder<List<DoctorAppointment>>(
           stream: historyStream,
           builder: (context, snap) {
-            final visits = DoctorPatientService.buildVisits(
-                record, snap.data ?? const <DoctorAppointment>[]);
+            final appts = snap.data ?? const <DoctorAppointment>[];
+            final visits = DoctorPatientService.buildVisits(record, appts);
             final lines = [
               for (final v in visits)
                 '${DoctorFmt.dateShort(v.date)}|${v.title}',
             ];
-            return _HistoryCard(
-              icon: Icons.event_note_outlined,
-              iconColor: DoctorColors.teal,
-              title: 'Previous Visits',
-              sheetTitle: 'Previous Visits',
-              lines: lines,
-              previewCount: 3,
-              emptyText: 'No previous visits recorded',
-              datedLines: true,
+            // One StreamBuilder feeds both cards (a single listener).
+            return Column(
+              children: [
+                _HistoryCard(
+                  icon: Icons.event_note_outlined,
+                  iconColor: DoctorColors.teal,
+                  title: 'Previous Visits',
+                  sheetTitle: 'Previous Visits',
+                  lines: lines,
+                  previewCount: 3,
+                  emptyText: 'No previous visits recorded',
+                  datedLines: true,
+                ),
+                const SizedBox(height: 12),
+                MedicalFilesCard(appointments: appts),
+              ],
             );
           },
         ),

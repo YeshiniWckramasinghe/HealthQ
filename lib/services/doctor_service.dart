@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import 'doctor_attachment_service.dart';
 import 'doctor_availability_service.dart';
 import 'doctor_profile_service.dart';
 
@@ -58,6 +59,9 @@ class DoctorAppointment {
   final String? patientPhone;
   final String source; // 'demo' | 'booking'
 
+  /// Files (X-rays, PDFs ...) attached during the consultation.
+  final List<ConsultationAttachment> attachments;
+
   const DoctorAppointment({
     required this.id,
     required this.patientName,
@@ -76,6 +80,7 @@ class DoctorAppointment {
     this.patientAge,
     this.patientPhone,
     this.source = 'demo',
+    this.attachments = const <ConsultationAttachment>[],
   });
 
   factory DoctorAppointment.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
@@ -99,6 +104,7 @@ class DoctorAppointment {
       patientAge: age is num ? age.toInt() : null,
       patientPhone: _opt(m['patientPhone']),
       source: _s(m['source'], 'demo'),
+      attachments: ConsultationAttachment.listFrom(m['attachments']),
     );
   }
 
@@ -107,6 +113,7 @@ class DoctorAppointment {
     String? notes,
     String? diagnosis,
     String? prescription,
+    List<ConsultationAttachment>? attachments,
   }) =>
       DoctorAppointment(
         id: id,
@@ -126,6 +133,7 @@ class DoctorAppointment {
         patientAge: patientAge,
         patientPhone: patientPhone,
         source: source,
+        attachments: attachments ?? this.attachments,
       );
 
   bool get isCompleted => status == 'completed';

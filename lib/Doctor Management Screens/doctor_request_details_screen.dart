@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/doctor_availability_service.dart';
+import 'doctor_request_edit_screen.dart';
 import 'doctor_ui.dart';
 
 class DoctorRequestDetailsScreen extends StatefulWidget {
@@ -56,6 +57,18 @@ class _DoctorRequestDetailsScreenState
         setState(() => _cancelling = false);
         showDoctorSnack(context, cleanError(e), error: true);
       }
+    }
+  }
+
+  Future<void> _edit(AvailabilityRequest r) async {
+    if (_cancelling) return;
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => DoctorRequestEditScreen(request: r),
+      ),
+    );
+    if (saved == true && mounted) {
+      showDoctorSnack(context, 'Request ${r.id} updated.');
     }
   }
 
@@ -239,6 +252,12 @@ class _DoctorRequestDetailsScreenState
                     _Timeline(request: r),
                     if (r.isPending) ...[
                       const SizedBox(height: 22),
+                      PrimaryButton(
+                        label: 'Edit Request',
+                        icon: Icons.edit_outlined,
+                        onPressed: _cancelling ? null : () => _edit(r),
+                      ),
+                      const SizedBox(height: 12),
                       OutlineActionButton(
                         label: _cancelling ? 'Cancelling…' : 'Cancel Request',
                         icon: Icons.delete_outline_rounded,
@@ -272,6 +291,9 @@ class _Timeline extends StatelessWidget {
     final steps = <_Step>[
       _Step('Submitted successfully', DoctorFmt.dateTime(request.submittedAt),
           DoctorColors.teal),
+      if (request.editedAt != null)
+        _Step('Request edited', DoctorFmt.dateTime(request.editedAt!),
+            DoctorColors.blue),
     ];
     final when = request.reviewedAt != null
         ? DoctorFmt.dateTime(request.reviewedAt!)
