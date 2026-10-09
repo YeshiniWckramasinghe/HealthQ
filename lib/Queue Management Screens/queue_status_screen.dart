@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'queue_backend_service.dart';
+
 // ============================================================================
 // QUEUE PATIENT MODEL
 // ============================================================================
@@ -86,6 +88,43 @@ class QueueNavigationCenter {
 
     requestedTab.value = null;
     requestedTab.value = index;
+  }
+}
+
+// ============================================================================
+// SHARED SCREEN LAYOUT
+//
+// Every queue screen uses the same rule, like the Home screen:
+// full width on phones, centred and capped on tablets / web / desktop.
+// The bottom navigation always spans the full width.
+// ============================================================================
+
+class QueueLayout {
+  // Same cap the Check-In screen uses, so the whole flow lines up.
+  static const double maxContentWidth = 480;
+
+  static double contentWidth(double screenWidth) {
+    return math.min(screenWidth, maxContentWidth);
+  }
+
+  static Widget body({
+    required double screenWidth,
+    required Widget content,
+    required Widget bottomNavigation,
+  }) {
+    return Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: SizedBox(
+              width: contentWidth(screenWidth),
+              child: content,
+            ),
+          ),
+        ),
+        bottomNavigation,
+      ],
+    );
   }
 }
 
@@ -208,7 +247,9 @@ class _QueueStatusScreenState
           data['hospitalName']?.toString() ??
               data['hospital']?.toString();
 
-      
+      _doctorName =
+          data['doctorName']?.toString() ??
+              data['doctor']?.toString();
 
       _date =
           data['date']?.toString();
@@ -444,8 +485,14 @@ class _QueueStatusScreenState
           final formatted =
               '$day ${months[month - 1]} $year';
 
+          // Firestore queue docs may use "09 Oct 2026" (zero padded).
+          final paddedFormatted =
+              '${day.toString().padLeft(2, '0')} ${months[month - 1]} $year';
+
           if (queueDateText ==
-              formatted) {
+                  formatted ||
+              queueDateText ==
+                  paddedFormatted) {
             return true;
           }
         }
@@ -535,9 +582,9 @@ class _QueueStatusScreenState
     // Second priority:
     // first patient that is not completed.
     for (final patient in _patients) {
-      if (patient.status
-              .toLowerCase() !=
-          'completed') {
+      if (!QueueBackend.isFinished(
+        patient.status,
+      )) {
         return patient;
       }
     }
@@ -564,9 +611,9 @@ class _QueueStatusScreenState
 
       if (number != null &&
           number < _yourQueueNumber &&
-          patient.status
-                  .toLowerCase() !=
-              'completed') {
+          !QueueBackend.isFinished(
+            patient.status,
+          )) {
         count++;
       }
     }
@@ -616,39 +663,10 @@ class _QueueStatusScreenState
             final width =
                 constraints.maxWidth;
 
-            final horizontalPadding =
-                width < 380
-                    ? 14.0
-                    : width < 600
-                        ? 24.0
-                        : math.min(
-                            width * 0.08,
-                            70.0,
-                          );
-
-            final contentWidth =
-                math.min(
-              width -
-                  (horizontalPadding *
-                      2),
-              700.0,
-            );
-
-            return Center(
-              child: SizedBox(
-                width: contentWidth,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child:
-                          _buildBody(width),
-                    ),
-                    _buildBottomNavigation(
-                      width,
-                    ),
-                  ],
-                ),
-              ),
+            return QueueLayout.body(
+              screenWidth: width,
+              content: _buildBody(width),
+              bottomNavigation: _buildBottomNavigation(width),
             );
           },
         ),
@@ -1425,6 +1443,8 @@ class _QueueStatusScreenState
               _patientsAhead,
           patients:
               _patients,
+          appointmentId:
+              _appointmentId,
         ),
       ),
     );
@@ -1598,12 +1618,14 @@ class EstimatedWaitingTimeScreen
     required this.averageMinutesPerPatient,
     required this.patientsAhead,
     required this.patients,
+    this.appointmentId,
   });
 
   final int yourQueueNumber;
   final int averageMinutesPerPatient;
   final int patientsAhead;
   final List<QueuePatient> patients;
+  final String? appointmentId;
 
   @override
   State<EstimatedWaitingTimeScreen>
@@ -1615,9 +1637,18 @@ class _EstimatedWaitingTimeScreenState
     extends State<
         EstimatedWaitingTimeScreen> {
   Timer? _timer;
+  QueueLiveWatcher? _watcher;
+  bool _turnOpened = false;
 
   late int _initialSeconds;
   late int _remainingSeconds;
+
+  // Live values (start from what the previous screen passed in,
+  // then follow Firestore).
+  late int _yourQueueNumber;
+  late int _patientsAhead;
+  late int _averageMinutes;
+  late List<QueuePatient> _patients;
 
   final int _selectedBottomIndex = 2;
 
@@ -1625,11 +1656,16 @@ class _EstimatedWaitingTimeScreenState
   void initState() {
     super.initState();
 
+    _yourQueueNumber = widget.yourQueueNumber;
+    _patientsAhead = widget.patientsAhead;
+    _averageMinutes = widget.averageMinutesPerPatient;
+    _patients = widget.patients;
+
     final calculatedMinutes =
         math.max(
       1,
-      widget.patientsAhead *
-          widget.averageMinutesPerPatient,
+      _patientsAhead *
+          _averageMinutes,
     );
 
     _initialSeconds =
@@ -1639,6 +1675,51 @@ class _EstimatedWaitingTimeScreenState
         _initialSeconds;
 
     _startCountdown();
+    _startLiveListener();
+  }
+
+  // Follows the queue in Firestore. Patients ahead / waiting time update
+  // by themselves; when it becomes this patient's turn we open MyTurnScreen.
+  void _startLiveListener() {
+    final appointmentId = widget.appointmentId;
+
+    if (appointmentId == null || appointmentId.isEmpty) {
+      return;
+    }
+
+    _watcher = QueueLiveWatcher(
+      appointmentId: appointmentId,
+      onData: (data) {
+        if (!mounted || _turnOpened) {
+          return;
+        }
+
+        final changed =
+            data.patientsAhead != _patientsAhead ||
+                data.averageMinutesPerPatient != _averageMinutes;
+
+        setState(() {
+          _yourQueueNumber = data.yourQueueNumber;
+          _patients = data.patients;
+          _patientsAhead = data.patientsAhead;
+          _averageMinutes = data.averageMinutesPerPatient;
+
+          if (changed) {
+            _initialSeconds = data.estimatedMinutes * 60;
+            _remainingSeconds = _initialSeconds;
+          }
+        });
+
+        if (changed && !(_timer?.isActive ?? false)) {
+          _startCountdown();
+        }
+
+        if (data.isMyTurn) {
+          _openMyTurn();
+        }
+      },
+      onError: (_) {},
+    )..start();
   }
 
   void _startCountdown() {
@@ -1658,7 +1739,11 @@ class _EstimatedWaitingTimeScreenState
                 0;
           });
 
-          _openMyTurn();
+          // With a backend connection the live queue decides when it is
+          // the patient's turn, not the local countdown.
+          if (widget.appointmentId == null) {
+            _openMyTurn();
+          }
         } else {
           setState(() {
             _remainingSeconds--;
@@ -1671,6 +1756,7 @@ class _EstimatedWaitingTimeScreenState
   @override
   void dispose() {
     _timer?.cancel();
+    _watcher?.dispose();
     super.dispose();
   }
 
@@ -1697,14 +1783,26 @@ class _EstimatedWaitingTimeScreenState
   }
 
   void _openMyTurn() {
-    if (!mounted) {
+    if (!mounted || _turnOpened) {
       return;
+    }
+
+    _turnOpened = true;
+    _timer?.cancel();
+    _watcher?.dispose();
+
+    final appointmentId = widget.appointmentId;
+
+    if (appointmentId != null && appointmentId.isNotEmpty) {
+      QueueBackend.notifyYourTurn(appointmentId).catchError((e) {
+        debugPrint('notifyYourTurn failed: $e');
+      });
     }
 
     QueueNotificationCenter.add(
       title: 'It\'s Your Turn',
       body:
-          'Your queue number ${widget.yourQueueNumber} is now ready. Please proceed to the consultation room.',
+          'Your queue number $_yourQueueNumber is now ready. Please proceed to the consultation room.',
       icon:
           Icons.notifications_active,
       iconColor:
@@ -1717,9 +1815,11 @@ class _EstimatedWaitingTimeScreenState
         builder: (_) =>
             MyTurnScreen(
           yourQueueNumber:
-              widget.yourQueueNumber,
+              _yourQueueNumber,
           patients:
-              widget.patients,
+              _patients,
+          appointmentId:
+              widget.appointmentId,
         ),
       ),
     );
@@ -1739,33 +1839,9 @@ class _EstimatedWaitingTimeScreenState
             final width =
                 constraints.maxWidth;
 
-            final horizontalPadding =
-                width < 380
-                    ? 14.0
-                    : width < 600
-                        ? 24.0
-                        : math.min(
-                            width * 0.08,
-                            70.0,
-                          );
-
-            final contentWidth =
-                math.min(
-              width -
-                  (horizontalPadding *
-                      2),
-              700.0,
-            );
-
-            return Center(
-              child: SizedBox(
-                width:
-                    contentWidth,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child:
-                          SingleChildScrollView(
+            return QueueLayout.body(
+              screenWidth: width,
+              content: SingleChildScrollView(
                         physics:
                             const BouncingScrollPhysics(),
                         child:
@@ -1773,13 +1849,7 @@ class _EstimatedWaitingTimeScreenState
                           width,
                         ),
                       ),
-                    ),
-                    _buildBottomNavigation(
-                      width,
-                    ),
-                  ],
-                ),
-              ),
+              bottomNavigation: _buildBottomNavigation(width),
             );
           },
         ),
@@ -1949,7 +2019,7 @@ class _EstimatedWaitingTimeScreenState
         physics:
             const BouncingScrollPhysics(),
         itemCount:
-            widget.patients.length,
+            _patients.length,
         separatorBuilder:
             (_, _) =>
                 const SizedBox(
@@ -1958,7 +2028,7 @@ class _EstimatedWaitingTimeScreenState
         itemBuilder:
             (context, index) {
           final patient =
-              widget.patients[index];
+              _patients[index];
 
           final number =
               int.tryParse(
@@ -2026,8 +2096,8 @@ class _EstimatedWaitingTimeScreenState
     final estimatedWait =
         math.max(
       1,
-      widget.patientsAhead *
-          widget.averageMinutesPerPatient,
+      _patientsAhead *
+          _averageMinutes,
     );
 
     return Padding(
@@ -2049,7 +2119,7 @@ class _EstimatedWaitingTimeScreenState
                   Alignment.centerRight,
               child: _smallInfo(
                 'Patient Ahead',
-                '${widget.patientsAhead}',
+                '$_patientsAhead',
                 right: true,
               ),
             ),
@@ -2268,10 +2338,12 @@ class MyTurnScreen
     super.key,
     required this.yourQueueNumber,
     required this.patients,
+    this.appointmentId,
   });
 
   final int yourQueueNumber;
   final List<QueuePatient> patients;
+  final String? appointmentId;
 
   @override
   State<MyTurnScreen> createState() =>
@@ -2353,6 +2425,14 @@ class _MyTurnScreenState
     _handled = true;
     _timer?.cancel();
 
+    final appointmentId = widget.appointmentId;
+
+    if (appointmentId != null && appointmentId.isNotEmpty) {
+      QueueBackend.completeTurn(appointmentId).catchError((e) {
+        debugPrint('completeTurn failed: $e');
+      });
+    }
+
     QueueNotificationCenter.add(
       title:
           'Appointment Completed',
@@ -2417,6 +2497,14 @@ class _MyTurnScreenState
     _handled = true;
     _timer?.cancel();
 
+    final appointmentId = widget.appointmentId;
+
+    if (appointmentId != null && appointmentId.isNotEmpty) {
+      QueueBackend.markMissed(appointmentId).catchError((e) {
+        debugPrint('markMissed failed: $e');
+      });
+    }
+
     QueueNotificationCenter.add(
       title:
           'Missed My Turn',
@@ -2437,6 +2525,8 @@ class _MyTurnScreenState
               widget.yourQueueNumber,
           patients:
               widget.patients,
+          appointmentId:
+              widget.appointmentId,
         ),
       ),
     );
@@ -2456,21 +2546,9 @@ class _MyTurnScreenState
             final width =
                 constraints.maxWidth;
 
-            final contentWidth =
-                math.min(
-              width - 28,
-              700.0,
-            );
-
-            return Center(
-              child: SizedBox(
-                width:
-                    contentWidth,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child:
-                          SingleChildScrollView(
+            return QueueLayout.body(
+              screenWidth: width,
+              content: SingleChildScrollView(
                         physics:
                             const BouncingScrollPhysics(),
                         child:
@@ -2478,13 +2556,7 @@ class _MyTurnScreenState
                           width,
                         ),
                       ),
-                    ),
-                    _buildBottomNavigation(
-                      width,
-                    ),
-                  ],
-                ),
-              ),
+              bottomNavigation: _buildBottomNavigation(width),
             );
           },
         ),
@@ -2825,10 +2897,12 @@ class MissedMyTurnScreen
     super.key,
     required this.previousQueueNumber,
     required this.patients,
+    this.appointmentId,
   });
 
   final int previousQueueNumber;
   final List<QueuePatient> patients;
+  final String? appointmentId;
 
   @override
   State<MissedMyTurnScreen>
@@ -2875,7 +2949,56 @@ class _MissedMyTurnScreenState
     );
   }
 
-  void _rejoinQueue() {
+  Future<void> _rejoinQueue() async {
+    final appointmentId = widget.appointmentId;
+
+    // Connected to Firestore: take a real new queue number.
+    if (appointmentId != null && appointmentId.isNotEmpty) {
+      try {
+        final newNumber =
+            await QueueBackend.rejoinQueue(appointmentId);
+
+        if (!mounted) {
+          return;
+        }
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                NewQueueStatusScreen(
+              yourQueueNumber:
+                  newNumber,
+              patients:
+                  widget.patients,
+              currentServingIndex:
+                  0,
+              averageMinutesPerPatient:
+                  QueueBackend.defaultAverageMinutes,
+              appointmentId:
+                  appointmentId,
+            ),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Unable to rejoin the queue. Please try again.',
+            ),
+          ),
+        );
+      }
+
+      return;
+    }
+
     final newPatients =
         _generateNewQueuePatients();
 
@@ -2978,21 +3101,9 @@ class _MissedMyTurnScreenState
             final width =
                 constraints.maxWidth;
 
-            final contentWidth =
-                math.min(
-              width - 28,
-              700.0,
-            );
-
-            return Center(
-              child: SizedBox(
-                width:
-                    contentWidth,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child:
-                          SingleChildScrollView(
+            return QueueLayout.body(
+              screenWidth: width,
+              content: SingleChildScrollView(
                         physics:
                             const BouncingScrollPhysics(),
                         child:
@@ -3000,13 +3111,7 @@ class _MissedMyTurnScreenState
                           width,
                         ),
                       ),
-                    ),
-                    _buildBottomNavigation(
-                      width,
-                    ),
-                  ],
-                ),
-              ),
+              bottomNavigation: _buildBottomNavigation(width),
             );
           },
         ),
@@ -3319,12 +3424,14 @@ class NewQueueStatusScreen
     required this.patients,
     required this.currentServingIndex,
     required this.averageMinutesPerPatient,
+    this.appointmentId,
   });
 
   final int yourQueueNumber;
   final List<QueuePatient> patients;
   final int currentServingIndex;
   final int averageMinutesPerPatient;
+  final String? appointmentId;
 
   @override
   State<NewQueueStatusScreen>
@@ -3338,8 +3445,51 @@ class _NewQueueStatusScreenState
   final int _selectedBottomIndex =
       2;
 
+  QueueLiveWatcher? _watcher;
+  QueueLiveData? _live;
+
+  late int _yourNumber;
+  late int _averageMinutes;
+  late List<QueuePatient> _patients;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _yourNumber = widget.yourQueueNumber;
+    _averageMinutes = widget.averageMinutesPerPatient;
+    _patients = widget.patients;
+
+    final appointmentId = widget.appointmentId;
+
+    if (appointmentId != null && appointmentId.isNotEmpty) {
+      _watcher = QueueLiveWatcher(
+        appointmentId: appointmentId,
+        onData: (data) {
+          if (!mounted) {
+            return;
+          }
+
+          setState(() {
+            _live = data;
+            _yourNumber = data.yourQueueNumber;
+            _averageMinutes = data.averageMinutesPerPatient;
+            _patients = data.patients;
+          });
+        },
+        onError: (_) {},
+      )..start();
+    }
+  }
+
+  @override
+  void dispose() {
+    _watcher?.dispose();
+    super.dispose();
+  }
+
   int get _patientsAhead {
-    return widget.patients
+    return _patients
         .where(
           (patient) {
             final number =
@@ -3348,12 +3498,10 @@ class _NewQueueStatusScreenState
             );
 
             return number != null &&
-                number <
-                    widget
-                        .yourQueueNumber &&
-                patient.status
-                        .toLowerCase() !=
-                    'completed';
+                number < _yourNumber &&
+                !QueueBackend.isFinished(
+                  patient.status,
+                );
           },
         )
         .length;
@@ -3361,7 +3509,13 @@ class _NewQueueStatusScreenState
 
   QueuePatient
       get _currentlyServing {
-    if (widget.patients.isEmpty) {
+    final liveServing = _live?.currentlyServing;
+
+    if (liveServing != null) {
+      return liveServing;
+    }
+
+    if (_patients.isEmpty) {
       return const QueuePatient(
         queueNumber: '001',
         patientName:
@@ -3377,7 +3531,7 @@ class _NewQueueStatusScreenState
         widget.currentServingIndex
             .clamp(
       0,
-      widget.patients.length - 1,
+      _patients.length - 1,
     );
 
     return widget
@@ -3388,7 +3542,7 @@ class _NewQueueStatusScreenState
     return math.max(
       1,
       _patientsAhead *
-          widget.averageMinutesPerPatient,
+          _averageMinutes,
     );
   }
 
@@ -3399,14 +3553,15 @@ class _NewQueueStatusScreenState
         builder: (_) =>
             EstimatedWaitingTimeScreen(
           yourQueueNumber:
-              widget.yourQueueNumber,
+              _yourNumber,
           averageMinutesPerPatient:
-              widget
-                  .averageMinutesPerPatient,
+              _averageMinutes,
           patientsAhead:
               _patientsAhead,
           patients:
-              widget.patients,
+              _patients,
+          appointmentId:
+              widget.appointmentId,
         ),
       ),
     );
@@ -3426,21 +3581,9 @@ class _NewQueueStatusScreenState
             final width =
                 constraints.maxWidth;
 
-            final contentWidth =
-                math.min(
-              width - 28,
-              700.0,
-            );
-
-            return Center(
-              child: SizedBox(
-                width:
-                    contentWidth,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child:
-                          SingleChildScrollView(
+            return QueueLayout.body(
+              screenWidth: width,
+              content: SingleChildScrollView(
                         physics:
                             const BouncingScrollPhysics(),
                         child:
@@ -3448,13 +3591,7 @@ class _NewQueueStatusScreenState
                           width,
                         ),
                       ),
-                    ),
-                    _buildBottomNavigation(
-                      width,
-                    ),
-                  ],
-                ),
-              ),
+              bottomNavigation: _buildBottomNavigation(width),
             );
           },
         ),
@@ -3543,7 +3680,7 @@ class _NewQueueStatusScreenState
           ),
           Center(
             child: Text(
-              '#${widget.yourQueueNumber}',
+              '#$_yourNumber',
               style:
                   TextStyle(
                 fontSize:
@@ -3808,7 +3945,7 @@ class _NewQueueStatusScreenState
         physics:
             const BouncingScrollPhysics(),
         itemCount:
-            widget.patients.length,
+            _patients.length,
         separatorBuilder:
             (_, _) =>
                 const SizedBox(
@@ -3817,17 +3954,20 @@ class _NewQueueStatusScreenState
         itemBuilder:
             (context, index) {
           final patient =
-              widget.patients[index];
+              _patients[index];
 
           final number =
               int.tryParse(
             patient.queueNumber,
           );
 
+          // Bold box = the queue number currently being served.
           final selected =
               number ==
-                  widget
-                      .yourQueueNumber;
+                  int.tryParse(
+                _currentlyServing
+                    .queueNumber,
+              );
 
           return Container(
             width:
