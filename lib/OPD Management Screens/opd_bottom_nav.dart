@@ -3,6 +3,8 @@ import '../theme/app_colors.dart';
 import '../services/staff_auth_service.dart';
 import 'home_dashboard_screen.dart';
 import 'appointments_list_screen.dart';
+import 'opd_queue_management_screen.dart';
+import 'opd_notifications_screen.dart';
 
 class OpdBottomNav extends StatelessWidget {
   final int currentIndex;
@@ -49,6 +51,8 @@ class OpdBottomNav extends StatelessWidget {
             nurseId: effectiveNurseId,
             nurseName: effectiveNurseName,
             department: effectiveDept,
+            photoBase64: StaffAuthService.instance.currentStaff?.photoBase64,
+            photoUrl: StaffAuthService.instance.currentStaff?.photoUrl,
           ),
         ),
         (route) => route.isFirst,
@@ -62,19 +66,25 @@ class OpdBottomNav extends StatelessWidget {
         ),
       );
     } else if (index == 2) {
+      if (currentIndex == 2) return;
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => AppointmentsListScreen(
-            initialQueueTab: true,
+          builder: (_) => OpdQueueManagementScreen(
             hospital: effectiveHospital,
+            department: effectiveDept,
           ),
         ),
       );
     } else if (index == 3) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('OPD Alerts & Notifications'),
-          duration: Duration(seconds: 1),
+      if (currentIndex == 3) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => OpdNotificationsScreen(
+            hospital: effectiveHospital,
+            nurseId: effectiveNurseId,
+            nurseName: effectiveNurseName,
+            department: effectiveDept,
+          ),
         ),
       );
     }
@@ -128,7 +138,7 @@ class OpdBottomNav extends StatelessWidget {
             label,
             style: TextStyle(
               fontSize: 10,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
               color: color,
             ),
           ),

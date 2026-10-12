@@ -185,34 +185,50 @@ class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
                 Container(
                   decoration: BoxDecoration(
                     color: OpdColors.white,
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: OpdColors.primary300.withValues(alpha: 0.6),
-                      width: 1,
+                      color: const Color(0xFFD6EAE7),
+                      width: 1.2,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.02),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
                   ),
                   child: TextField(
                     controller: _searchController,
+                    textAlignVertical: TextAlignVertical.center,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      color: Color(0xFF0F2E2C),
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
                       hintText: 'Search by Token, Patient Name, NIC, or Doctor...',
                       hintStyle: const TextStyle(
-                        fontSize: 12,
-                        color: OpdColors.textMuted,
+                        fontSize: 13,
+                        color: Color(0xFF94A3B8),
+                        fontWeight: FontWeight.w400,
                       ),
                       prefixIcon: const Icon(
-                        Icons.search,
-                        size: 20,
-                        color: OpdColors.primary300,
+                        Icons.search_rounded,
+                        size: 21,
+                        color: OpdColors.primaryTeal,
                       ),
                       suffixIcon: _searchController.text.isNotEmpty
                           ? IconButton(
-                              icon: const Icon(Icons.clear, size: 16),
+                              icon: const Icon(Icons.cancel_rounded, size: 18, color: Color(0xFF94A3B8)),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                               onPressed: () => _searchController.clear(),
                             )
                           : null,
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
-                        vertical: 11,
+                        vertical: 12,
                         horizontal: 14,
                       ),
                     ),

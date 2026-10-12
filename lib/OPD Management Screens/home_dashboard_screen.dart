@@ -9,6 +9,8 @@ import 'opd_bottom_nav.dart';
 import 'patient_management_hub_screen.dart';
 import 'appointments_list_screen.dart';
 import 'nurse_profile_screen.dart';
+import 'opd_queue_management_screen.dart';
+import 'opd_doctor_management_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
   final String? nurseName;
@@ -19,6 +21,8 @@ class HomeDashboardScreen extends StatefulWidget {
   final String? email;
   final String? shift;
   final String? role;
+  final String? photoBase64;
+  final String? photoUrl;
 
   const HomeDashboardScreen({
     super.key,
@@ -30,6 +34,8 @@ class HomeDashboardScreen extends StatefulWidget {
     this.email,
     this.shift,
     this.role,
+    this.photoBase64,
+    this.photoUrl,
   });
 
   @override
@@ -60,10 +66,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (widget.hospital != null && widget.hospital!.trim().isNotEmpty) {
       return widget.hospital!.trim();
     }
-    if (StaffAuthService.instance.currentStaff?.hospital != null &&
-        StaffAuthService.instance.currentStaff!.hospital.trim().isNotEmpty) {
-      return StaffAuthService.instance.currentStaff!.hospital.trim();
-    }
+    try {
+      if (StaffAuthService.instance.currentStaff?.hospital != null &&
+          StaffAuthService.instance.currentStaff!.hospital.trim().isNotEmpty) {
+        return StaffAuthService.instance.currentStaff!.hospital.trim();
+      }
+    } catch (_) {}
     return 'City General Hospital';
   }
 
@@ -83,9 +91,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _nurseName = widget.nurseName ?? StaffAuthService.instance.currentStaff?.name;
-    _nurseDepartment = widget.department ?? StaffAuthService.instance.currentStaff?.department;
-    _nurseHospital = widget.hospital ?? StaffAuthService.instance.currentStaff?.hospital;
+    final currentStaff = StaffAuthService.instance.currentStaff;
+    _nurseName = widget.nurseName ?? currentStaff?.name;
+    _nurseDepartment = widget.department ?? currentStaff?.department;
+    _nurseHospital = widget.hospital ?? currentStaff?.hospital;
+    _nursePhotoBase64 = widget.photoBase64 ?? currentStaff?.photoBase64 ?? '';
+    _nursePhotoUrl = widget.photoUrl ?? currentStaff?.photoUrl ?? '';
 
     _loadNurseData();
     _listenToNurseProfile();
@@ -103,9 +114,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // 1. Nurse Profile Loading & Live Real-Time Updates
-  // ---------------------------------------------------------------------------
   Future<void> _loadNurseData() async {
     final staffId = widget.nurseId ??
         StaffAuthService.instance.currentStaff?.staffId ??
@@ -118,8 +126,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           _nurseName = staff.name;
           _nurseDepartment = staff.department ?? _nurseDepartment;
           _nurseHospital = staff.hospital;
-          _nursePhotoBase64 = staff.photoBase64 ?? '';
-          _nursePhotoUrl = staff.photoUrl ?? '';
+          if (staff.photoBase64 != null && staff.photoBase64!.isNotEmpty) {
+            _nursePhotoBase64 = staff.photoBase64!;
+          }
+          if (staff.photoUrl != null && staff.photoUrl!.isNotEmpty) {
+            _nursePhotoUrl = staff.photoUrl!;
+          }
         });
         StaffAuthService.instance.setCurrentStaff(staff);
         if (hospitalChanged) {
@@ -133,51 +145,66 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   void _listenToNurseProfile() {
-    final staffId = (widget.nurseId ??
-            StaffAuthService.instance.currentStaff?.staffId ??
-            'NUR1002-0011')
-        .trim()
-        .toUpperCase();
-    _staffSubscription = FirebaseFirestore.instance
-        .collection('staff')
-        .snapshots()
-        .listen((snap) {
-      for (final doc in snap.docs) {
-        final d = doc.data();
-        final sid = (d['staffId'] ?? d['id'] ?? doc.id).toString().trim().toUpperCase();
-        if (sid == staffId || doc.id.toUpperCase() == staffId) {
-          if (mounted) {
-            final newHospital = (d['hospital'] ?? d['hospitalName'] ?? '').toString().trim();
-            final bool hospitalChanged = newHospital.isNotEmpty && newHospital != _nurseHospital;
-            setState(() {
-              _nursePhotoBase64 = (d['photoBase64'] ?? '').toString();
-              _nursePhotoUrl = (d['photoUrl'] ?? '').toString();
-              if (d['name'] != null && d['name'].toString().isNotEmpty) {
-                _nurseName = d['name'].toString();
+    try {
+      final staffId = (widget.nurseId ??
+              StaffAuthService.instance.currentStaff?.staffId ??
+              'NUR1002-0011')
+          .trim()
+          .toUpperCase();
+      _staffSubscription = FirebaseFirestore.instance
+          .collection('staff')
+          .snapshots()
+          .listen((snap) {
+        for (final doc in snap.docs) {
+          final d = doc.data();
+          final sid = (d['staffId'] ?? d['id'] ?? doc.id).toString().trim().toUpperCase();
+          if (sid == staffId || doc.id.toUpperCase() == staffId) {
+            if (mounted) {
+              final newHospital = (d['hospital'] ?? d['hospitalName'] ?? '').toString().trim();
+              final bool hospitalChanged = newHospital.isNotEmpty && newHospital != _nurseHospital;
+              final pBase64 = (d['photoBase64'] ?? d['photo_base64'] ?? '').toString();
+              final pUrl = (d['photoUrl'] ?? d['avatarUrl'] ?? d['profilePic'] ?? '').toString();
+              final legacyPhoto = (d['photo'] ?? '').toString();
+
+              setState(() {
+                if (pBase64.isNotEmpty) {
+                  _nursePhotoBase64 = pBase64;
+                } else if (legacyPhoto.isNotEmpty && !legacyPhoto.startsWith('http') && !legacyPhoto.startsWith('preset:')) {
+                  _nursePhotoBase64 = legacyPhoto;
+                }
+
+                if (pUrl.isNotEmpty) {
+                  _nursePhotoUrl = pUrl;
+                } else if (legacyPhoto.isNotEmpty && (legacyPhoto.startsWith('http') || legacyPhoto.startsWith('preset:'))) {
+                  _nursePhotoUrl = legacyPhoto;
+                }
+
+                if (d['name'] != null && d['name'].toString().isNotEmpty) {
+                  _nurseName = d['name'].toString();
+                }
+                if (d['department'] != null && d['department'].toString().isNotEmpty) {
+                  _nurseDepartment = d['department'].toString();
+                }
+                if (newHospital.isNotEmpty) {
+                  _nurseHospital = newHospital;
+                }
+              });
+              if (hospitalChanged) {
+                _loadDoctorsFromDatabase();
+                _listenToAppointmentsQueue();
               }
-              if (d['department'] != null && d['department'].toString().isNotEmpty) {
-                _nurseDepartment = d['department'].toString();
-              }
-              if (newHospital.isNotEmpty) {
-                _nurseHospital = newHospital;
-              }
-            });
-            if (hospitalChanged) {
-              _loadDoctorsFromDatabase();
-              _listenToAppointmentsQueue();
             }
+            break;
           }
-          break;
         }
-      }
-    }, onError: (e) {
-      debugPrint('Live nurse profile listener note: $e');
-    });
+      }, onError: (e) {
+        debugPrint('Live nurse profile listener note: $e');
+      });
+    } catch (e) {
+      debugPrint('Live nurse profile error: $e');
+    }
   }
 
-  // ---------------------------------------------------------------------------
-  // 2. Load Real Doctors strictly for Nurse's Registered Hospital
-  // ---------------------------------------------------------------------------
   Future<void> _loadDoctorsFromDatabase() async {
     setState(() => _isLoadingDoctors = true);
     try {
@@ -199,60 +226,58 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // 3. Real-Time Live Queue Count strictly for Nurse's Registered Hospital
-  // ---------------------------------------------------------------------------
   void _listenToAppointmentsQueue() {
-    _appointmentsSubscription?.cancel();
-    final targetHosp = _effectiveHospital;
-    final targetCode = _effectiveHospitalCode;
+    try {
+      _appointmentsSubscription?.cancel();
+      final targetHosp = _effectiveHospital;
+      final targetCode = _effectiveHospitalCode;
 
-    _appointmentsSubscription = FirebaseFirestore.instance
-        .collection('appointments')
-        .snapshots()
-        .listen((snap) {
-      final Map<String, int> counts = {};
+      _appointmentsSubscription = FirebaseFirestore.instance
+          .collection('appointments')
+          .snapshots()
+          .listen((snap) {
+        final Map<String, int> counts = {};
 
-      for (final doc in snap.docs) {
-        final d = doc.data();
-        final docHospital = (d['hospitalName'] ?? d['hospital'] ?? '').toString().trim();
-        final docHospitalId = (d['hospitalIdentificationNo'] ??
-                d['hospitalCode'] ??
-                d['hospitalId'] ??
-                '')
-            .toString()
-            .trim();
+        for (final doc in snap.docs) {
+          final d = doc.data();
+          final docHospital = (d['hospitalName'] ?? d['hospital'] ?? '').toString().trim();
+          final docHospitalId = (d['hospitalIdentificationNo'] ??
+                  d['hospitalCode'] ??
+                  d['hospitalId'] ??
+                  '')
+              .toString()
+              .trim();
 
-        // STRICT HOSPITAL MATCH:
-        // Exclude appointments belonging to other hospitals
-        if (!Hospital.matchesHospital(
-          targetHospital: targetHosp,
-          targetCode: targetCode,
-          itemHospital: docHospital,
-          itemCode: docHospitalId,
-        )) {
-          continue;
-        }
+          if (!Hospital.matchesHospital(
+            targetHospital: targetHosp,
+            targetCode: targetCode,
+            itemHospital: docHospital,
+            itemCode: docHospitalId,
+          )) {
+            continue;
+          }
 
-        final docStatus = (d['status'] ?? 'Waiting').toString().toLowerCase();
+          final docStatus = (d['status'] ?? 'Waiting').toString().toLowerCase();
 
-        // Count patients who are waiting or currently in consultation
-        if (docStatus == 'waiting' || docStatus == 'in consult' || docStatus == 'upcoming') {
-          final docName = (d['doctorName'] ?? d['doctor'] ?? '').toString().toLowerCase().trim();
-          if (docName.isNotEmpty) {
-            counts[docName] = (counts[docName] ?? 0) + 1;
+          if (docStatus == 'waiting' || docStatus == 'in consult' || docStatus == 'upcoming') {
+            final docName = (d['doctorName'] ?? d['doctor'] ?? '').toString().toLowerCase().trim();
+            if (docName.isNotEmpty) {
+              counts[docName] = (counts[docName] ?? 0) + 1;
+            }
           }
         }
-      }
 
-      if (mounted) {
-        setState(() {
-          _doctorQueueCounts = counts;
-        });
-      }
-    }, onError: (e) {
-      debugPrint('Queue count listener note: $e');
-    });
+        if (mounted) {
+          setState(() {
+            _doctorQueueCounts = counts;
+          });
+        }
+      }, onError: (e) {
+        debugPrint('Queue count listener note: $e');
+      });
+    } catch (e) {
+      debugPrint('Queue count error: $e');
+    }
   }
 
   Future<void> _openNurseProfile() async {
@@ -260,18 +285,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       MaterialPageRoute(
         builder: (_) => NurseProfileScreen(
           nurseName: _nurseName ?? widget.nurseName,
-          nurseId: widget.nurseId,
+          nurseId: widget.nurseId ?? StaffAuthService.instance.currentStaff?.staffId,
           department: _nurseDepartment ?? widget.department,
           hospital: _nurseHospital ?? widget.hospital,
           phone: widget.phone,
           email: widget.email,
           shift: widget.shift,
           role: widget.role,
+          staffModel: StaffAuthService.instance.currentStaff,
         ),
       ),
     );
 
-    // Immediate update from pop result
     if (result is Map && mounted) {
       setState(() {
         if (result['photoBase64'] != null) {
@@ -292,13 +317,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       });
     }
 
-    // Secondary reload to ensure full sync with Firestore
     await _loadNurseData();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Search query filtering real doctors
     final query = _searchController.text.trim().toLowerCase();
     final displayedDoctors = query.isEmpty
         ? _doctors
@@ -323,8 +346,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             nurseId: widget.nurseId != null && widget.nurseId!.isNotEmpty
                 ? 'ID: ${widget.nurseId}'
                 : 'ID: NUR1002-0011',
-            department: widget.department ?? 'General Medicine OPD',
+            department: _nurseDepartment ?? widget.department ?? 'General Medicine OPD',
             hospital: _effectiveHospitalDisplay,
+            photoBase64: _nursePhotoBase64.isNotEmpty ? _nursePhotoBase64 : null,
+            photoUrl: _nursePhotoUrl.isNotEmpty ? _nursePhotoUrl : null,
             onAvatarTap: _openNurseProfile,
           ),
 
@@ -382,7 +407,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
                   const SizedBox(height: 18),
 
-                  // Quick Action Hub (3 Columns)
+                  // Quick Action Hub (4 Columns, Equal Width)
                   Row(
                     children: [
                       Expanded(
@@ -409,7 +434,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           },
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: _buildActionTile(
                           icon: Icons.calendar_month_outlined,
@@ -425,7 +450,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           },
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: _buildActionTile(
                           icon: Icons.format_list_numbered_outlined,
@@ -433,9 +458,27 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (_) => AppointmentsListScreen(
-                                  initialQueueTab: true,
+                                builder: (_) => OpdQueueManagementScreen(
                                   hospital: _effectiveHospital,
+                                  department: _nurseDepartment,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildActionTile(
+                          icon: Icons.medical_services_outlined,
+                          title: 'Doctor\nManagement',
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => OpdDoctorManagementScreen(
+                                  hospital: _effectiveHospital,
+                                  hospitalCode: _effectiveHospitalCode,
+                                  department: _nurseDepartment,
                                 ),
                               ),
                             );
@@ -539,7 +582,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 84,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         decoration: BoxDecoration(
           color: OpdColors.white,
           borderRadius: BorderRadius.circular(12),
@@ -560,18 +603,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           children: [
             Icon(
               icon,
-              size: 24,
+              size: 22,
               color: OpdColors.primary300,
             ),
-            const SizedBox(height: 6),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: OpdColors.primary500,
-                height: 1.2,
+            const SizedBox(height: 5),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                style: const TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w600,
+                  color: OpdColors.primary500,
+                  height: 1.15,
+                ),
               ),
             ),
           ],
@@ -581,7 +628,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildRealDoctorCard(Doctor doc) {
-    // Compute live queue count from Firestore appointments or doc.waiting
     final docKey = doc.name.toLowerCase().trim();
     final liveQueueCount = _doctorQueueCounts[docKey] ?? doc.waiting;
     final roomDisplay = doc.room != null && doc.room!.isNotEmpty ? doc.room! : 'Room 01';
@@ -590,12 +636,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: () {
-          // Tapping doctor navigates to this doctor's appointments queue!
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => AppointmentsListScreen(
-                filterDoctor: doc.name,
+              builder: (_) => OpdQueueManagementScreen(
+                initialDoctorFilter: doc.name,
                 hospital: _effectiveHospital,
+                department: doc.speciality,
               ),
             ),
           );
@@ -620,7 +666,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
           child: Row(
             children: [
-              // Doctor Avatar Icon
               Container(
                 width: 38,
                 height: 38,
@@ -636,8 +681,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-
-              // Doctor Info
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -661,8 +704,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ],
                 ),
               ),
-
-              // Real-Time Queue Badge
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
