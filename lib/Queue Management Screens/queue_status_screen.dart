@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'check_in_screen.dart';
 import 'queue_backend_service.dart';
 
 // ============================================================================
@@ -92,6 +93,106 @@ class QueueNavigationCenter {
 }
 
 // ============================================================================
+// SHARED QUEUE BOTTOM BAR
+// ============================================================================
+
+class QueueBottomBar extends StatelessWidget {
+  final int selectedIndex;
+  const QueueBottomBar({super.key, this.selectedIndex = -1});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: 64,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: Color(0xFFE1E9E8),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          _buildNavItem(
+            context: context,
+            icon: Icons.home_outlined,
+            selectedIcon: Icons.home_rounded,
+            label: 'Home',
+            index: 0,
+          ),
+          _buildNavItem(
+            context: context,
+            icon: Icons.calendar_today_outlined,
+            selectedIcon: Icons.calendar_month_rounded,
+            label: 'Appointments',
+            index: 1,
+          ),
+          _buildNavItem(
+            context: context,
+            icon: Icons.notifications_none_rounded,
+            selectedIcon: Icons.notifications_rounded,
+            label: 'Notifications',
+            index: 2,
+          ),
+          _buildNavItem(
+            context: context,
+            icon: Icons.person_outline_rounded,
+            selectedIcon: Icons.person_rounded,
+            label: 'Profile',
+            index: 3,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required BuildContext context,
+    required IconData icon,
+    required IconData selectedIcon,
+    required String label,
+    required int index,
+  }) {
+    final selected = selectedIndex == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          QueueNavigationCenter.goToTab(context, index);
+        },
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              selected ? selectedIcon : icon,
+              size: 22,
+              color: selected
+                  ? const Color(0xFF007471)
+                  : const Color(0xFF789090),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected
+                    ? const Color(0xFF007471)
+                    : const Color(0xFF789090),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
 // SHARED SCREEN LAYOUT
 //
 // Every queue screen uses the same rule, like the Home screen:
@@ -133,8 +234,13 @@ class QueueLayout {
 // ============================================================================
 
 class QueueStatusScreen extends StatefulWidget {
+  final String? appointmentId;
+  final CheckInAppointment? initialAppointment;
+
   const QueueStatusScreen({
     super.key,
+    this.appointmentId,
+    this.initialAppointment,
   });
 
   @override
@@ -152,6 +258,8 @@ class _QueueStatusScreenState
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
       _queueSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _appointmentsSubscription;
 
   bool _isLoading = true;
   String? _errorMessage;
@@ -162,29 +270,46 @@ class _QueueStatusScreenState
   String? _date;
   String? _session;
   String? _patientName;
+  String? _nic;
 
   int _yourQueueNumber = 0;
+
+  // Holds appointment if user has not yet checked in
+  DocumentSnapshot<Map<String, dynamic>>? _notCheckedInDoc;
 
   List<QueuePatient> _patients = [];
 
   final int _averageMinutesPerPatient = 5;
 
-  final int _selectedBottomIndex = 2;
-
   @override
   void initState() {
     super.initState();
+    if (widget.initialAppointment != null) {
+      _applyInitialAppointment(widget.initialAppointment!);
+    }
     _loadQueueData();
+  }
+
+  void _applyInitialAppointment(CheckInAppointment a) {
+    _appointmentId = a.appointmentId;
+    _hospital = a.hospital;
+    _doctorName = a.doctor;
+    _date = a.date;
+    _session = a.session;
+    _patientName = a.patient;
+    _nic = a.nic;
+    _yourQueueNumber = int.tryParse(a.estimatedQueueNumber) ?? 0;
   }
 
   @override
   void dispose() {
     _queueSubscription?.cancel();
+    _appointmentsSubscription?.cancel();
     super.dispose();
   }
 
   // ==========================================================================
-  // LOAD USER'S CHECKED-IN APPOINTMENT
+  // LOAD USER'S APPOINTMENT (CHECKED IN OR CONFIRMED)
   // ==========================================================================
 
   Future<void> _loadQueueData() async {
@@ -193,6 +318,7 @@ class _QueueStatusScreenState
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _notCheckedInDoc = null;
     });
 
     try {
@@ -204,61 +330,127 @@ class _QueueStatusScreenState
         );
       }
 
-      // Get the user's checked-in appointment.
-      final appointmentSnapshot = await _firestore
-          .collection('appointments')
-          .where(
-            'userId',
-            isEqualTo: user.uid,
-          )
-          .where(
-            'checkedIn',
-            isEqualTo: true,
-          )
-          .get();
+      DocumentSnapshot<Map<String, dynamic>>? appointmentDoc;
 
-      if (appointmentSnapshot.docs.isEmpty) {
-        throw Exception(
-          'No checked-in appointment was found.',
-        );
-      }
-
-      // Prefer an appointment that is still waiting.
-      QueryDocumentSnapshot<Map<String, dynamic>> appointmentDoc =
-          appointmentSnapshot.docs.first;
-
-      for (final doc in appointmentSnapshot.docs) {
-        final data = doc.data();
-
-        final queueStatus =
-            data['queueStatus']?.toString().toLowerCase();
-
-        if (queueStatus == 'waiting') {
-          appointmentDoc = doc;
-          break;
+      // 1. Direct lookup by appointmentId
+      final targetId = widget.appointmentId ?? _appointmentId;
+      if (targetId != null && targetId.isNotEmpty) {
+        final directSnap = await _firestore
+            .collection('appointments')
+            .doc(targetId)
+            .get();
+        if (directSnap.exists) {
+          appointmentDoc = directSnap;
         }
       }
 
-      final data = appointmentDoc.data();
+      // 2. Query by authUid / userUid / userId / nic
+      if (appointmentDoc == null) {
+        var snaps = await _firestore
+            .collection('appointments')
+            .where('authUid', isEqualTo: user.uid)
+            .get();
+
+        if (snaps.docs.isEmpty) {
+          snaps = await _firestore
+              .collection('appointments')
+              .where('userUid', isEqualTo: user.uid)
+              .get();
+        }
+
+        if (snaps.docs.isEmpty) {
+          snaps = await _firestore
+              .collection('appointments')
+              .where('userId', isEqualTo: user.uid)
+              .get();
+        }
+
+        if (snaps.docs.isEmpty) {
+          try {
+            final userDoc = await _firestore
+                .collection('users')
+                .doc(user.uid)
+                .get();
+            final nic = (userDoc.data()?['nic'] ??
+                    userDoc.data()?['userId'] ??
+                    '')
+                .toString()
+                .trim();
+            if (nic.isNotEmpty) {
+              snaps = await _firestore
+                  .collection('appointments')
+                  .where('nic', isEqualTo: nic)
+                  .get();
+
+              if (snaps.docs.isEmpty) {
+                snaps = await _firestore
+                    .collection('appointments')
+                    .where('userId', isEqualTo: nic)
+                    .get();
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (snaps.docs.isNotEmpty) {
+          // Priority 1: checked in & waiting
+          QueryDocumentSnapshot<Map<String, dynamic>>? bestDoc;
+          for (final doc in snaps.docs) {
+            final d = doc.data();
+            if (d['checkedIn'] == true &&
+                (d['queueStatus'] ?? '').toString().toLowerCase() == 'waiting') {
+              bestDoc = doc;
+              break;
+            }
+          }
+
+          // Priority 2: any checked in
+          bestDoc ??= snaps.docs
+              .where((d) => d.data()['checkedIn'] == true)
+              .firstOrNull;
+
+          // Priority 3: confirmed or upcoming
+          bestDoc ??= snaps.docs.where((d) {
+            final s = (d.data()['status'] ?? '').toString().toLowerCase();
+            return s == 'confirmed' || s == 'upcoming';
+          }).firstOrNull;
+
+          // Priority 4: first matching doc
+          bestDoc ??= snaps.docs.first;
+
+          appointmentDoc = bestDoc;
+        }
+      }
+
+      if (appointmentDoc == null) {
+        throw Exception(
+          'No active appointment was found.',
+        );
+      }
+
+      final data = appointmentDoc.data() ?? {};
 
       _appointmentId = appointmentDoc.id;
 
       _hospital =
           data['hospitalName']?.toString() ??
-              data['hospital']?.toString();
+              data['hospital']?.toString() ?? '';
 
       _doctorName =
           data['doctorName']?.toString() ??
-              data['doctor']?.toString();
+              data['doctor']?.toString() ?? '';
 
       _date =
-          data['date']?.toString();
+          data['date']?.toString() ?? '';
 
       _session =
-          data['session']?.toString();
+          data['session']?.toString() ?? '';
 
       _patientName =
-          data['patientName']?.toString();
+          data['patientName']?.toString() ?? '';
+
+      _nic =
+          data['nic']?.toString() ?? '';
 
       final queueNumberValue =
           data['queueNumber'] ?? data['queueNo'];
@@ -266,28 +458,19 @@ class _QueueStatusScreenState
       _yourQueueNumber =
           _readQueueNumber(queueNumberValue);
 
-      if (_appointmentId == null ||
-          _appointmentId!.isEmpty) {
-        throw Exception(
-          'Appointment ID is missing.',
-        );
+      final isCheckedIn = (data['checkedIn'] == true);
+
+      // If appointment is confirmed/pending but user has not checked in yet:
+      if (!isCheckedIn) {
+        if (!mounted) return;
+        setState(() {
+          _notCheckedInDoc = appointmentDoc;
+          _isLoading = false;
+        });
+        return;
       }
 
-      if (_hospital == null ||
-          _hospital!.isEmpty) {
-        throw Exception(
-          'Hospital information is missing.',
-        );
-      }
-
-      if (_doctorName == null ||
-          _doctorName!.isEmpty) {
-        throw Exception(
-          'Doctor information is missing.',
-        );
-      }
-
-      // Start real-time queue listener.
+      // Start real-time queue listener across collections.
       _listenToQueues();
     } catch (e) {
       if (!mounted) return;
@@ -301,22 +484,24 @@ class _QueueStatusScreenState
   }
 
   // ==========================================================================
-  // LISTEN TO FIRESTORE QUEUES
+  // LISTEN TO FIRESTORE QUEUES & APPOINTMENTS
   // ==========================================================================
 
   void _listenToQueues() {
     _queueSubscription?.cancel();
+    _appointmentsSubscription?.cancel();
 
-    _queueSubscription = _firestore
-        .collection('queues')
-        .snapshots()
-        .listen(
-      (snapshot) {
-        if (!mounted) return;
+    QuerySnapshot<Map<String, dynamic>>? latestQueues;
+    QuerySnapshot<Map<String, dynamic>>? latestAppts;
 
-        final List<QueuePatient> loadedPatients = [];
+    void updateCombinedQueue() {
+      if (!mounted) return;
 
-        for (final doc in snapshot.docs) {
+      final Map<int, QueuePatient> patientMap = {};
+
+      // 1. From queues collection
+      if (latestQueues != null) {
+        for (final doc in latestQueues!.docs) {
           final data = doc.data();
 
           final hospital =
@@ -325,11 +510,9 @@ class _QueueStatusScreenState
           final doctorName =
               data['doctorName']?.toString();
 
-
           final session =
               data['session']?.toString();
 
-          // Match the queue with the current appointment.
           final sameHospital =
               hospital == _hospital;
 
@@ -358,48 +541,74 @@ class _QueueStatusScreenState
             continue;
           }
 
-          loadedPatients.add(
-            QueuePatient(
-              queueNumber:
-                  queueNumber.toString().padLeft(2, '0'),
-              patientName:
-                  data['patientName']?.toString() ??
-                      'Patient $queueNumber',
-              doctorName:
-                  doctorName ?? _doctorName ?? '',
-              status:
-                  data['status']?.toString() ??
-                      'Waiting',
-            ),
+          patientMap[queueNumber] = QueuePatient(
+            queueNumber:
+                queueNumber.toString().padLeft(2, '0'),
+            patientName:
+                data['patientName']?.toString() ??
+                    'Patient $queueNumber',
+            doctorName:
+                doctorName ?? _doctorName ?? '',
+            status:
+                data['status']?.toString() ??
+                    'Waiting',
           );
         }
+      }
 
-        // If the current queue document was not found in the
-        // filtered queue collection, create it from the appointment.
-        final containsYourNumber =
-            loadedPatients.any(
-          (patient) =>
-              int.tryParse(patient.queueNumber) ==
-              _yourQueueNumber,
+      // 2. From appointments collection
+      if (latestAppts != null) {
+        for (final doc in latestAppts!.docs) {
+          final data = doc.data();
+
+          final hospital = (data['hospitalName'] ?? data['hospital'] ?? '').toString();
+          final doctorName = (data['doctorName'] ?? data['doctor'] ?? '').toString();
+          final session = (data['session'] ?? '').toString();
+          final status = (data['status'] ?? '').toString().toLowerCase();
+
+          if (status == 'cancelled' || status == 'rejected') continue;
+
+          final sameHospital = hospital == _hospital;
+          final sameDoctor = doctorName == _doctorName;
+          final sameDate = _isSameDate(data['date']);
+          final sameSession = session == _session;
+
+          if (!sameHospital || !sameDoctor || !sameDate || !sameSession) {
+            continue;
+          }
+
+          final queueNumber = _readQueueNumber(data['queueNo'] ?? data['queueNumber']);
+          if (queueNumber <= 0) continue;
+
+          final isChecked = (data['checkedIn'] == true);
+          final rawQueueStatus = (data['queueStatus'] ?? (isChecked ? 'Waiting' : 'Booked')).toString();
+
+          if (!patientMap.containsKey(queueNumber) || isChecked) {
+            patientMap[queueNumber] = QueuePatient(
+              queueNumber: queueNumber.toString().padLeft(2, '0'),
+              patientName: data['patientName']?.toString() ?? 'Patient $queueNumber',
+              doctorName: doctorName.isNotEmpty ? doctorName : (_doctorName ?? ''),
+              status: rawQueueStatus,
+            );
+          }
+        }
+      }
+
+      // Ensure current user's number is present
+      if (_yourQueueNumber > 0 && !patientMap.containsKey(_yourQueueNumber)) {
+        patientMap[_yourQueueNumber] = QueuePatient(
+          queueNumber:
+              _yourQueueNumber.toString().padLeft(2, '0'),
+          patientName:
+              _patientName?.isNotEmpty == true ? _patientName! : 'You',
+          doctorName:
+              _doctorName ?? '',
+          status: 'Waiting',
         );
+      }
 
-        if (!containsYourNumber &&
-            _yourQueueNumber > 0) {
-          loadedPatients.add(
-            QueuePatient(
-              queueNumber: _yourQueueNumber
-                  .toString()
-                  .padLeft(2, '0'),
-              patientName:
-                  _patientName ?? 'You',
-              doctorName:
-                  _doctorName ?? '',
-              status: 'Waiting',
-            ),
-          );
-        }
-
-        loadedPatients.sort(
+      final loadedPatients = patientMap.values.toList()
+        ..sort(
           (a, b) {
             final aNumber =
                 int.tryParse(a.queueNumber) ?? 0;
@@ -411,19 +620,41 @@ class _QueueStatusScreenState
           },
         );
 
-        setState(() {
-          _patients = loadedPatients;
-          _isLoading = false;
-          _errorMessage = null;
-        });
+      setState(() {
+        _patients = loadedPatients;
+        _isLoading = false;
+        _errorMessage = null;
+      });
+    }
+
+    _queueSubscription = _firestore
+        .collection('queues')
+        .snapshots()
+        .listen(
+      (snapshot) {
+        latestQueues = snapshot;
+        updateCombinedQueue();
       },
       onError: (error) {
         if (!mounted) return;
-
         setState(() {
           _isLoading = false;
-          _errorMessage =
-              'Unable to load live queue data.';
+        });
+      },
+    );
+
+    _appointmentsSubscription = _firestore
+        .collection('appointments')
+        .snapshots()
+        .listen(
+      (snapshot) {
+        latestAppts = snapshot;
+        updateCombinedQueue();
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
         });
       },
     );
@@ -687,6 +918,10 @@ class _QueueStatusScreenState
       );
     }
 
+    if (_notCheckedInDoc != null) {
+      return _buildCheckInRequiredView(width);
+    }
+
     if (_errorMessage != null) {
       return _buildErrorState(width);
     }
@@ -703,6 +938,226 @@ class _QueueStatusScreenState
         ),
         child: _buildMainContent(width),
       ),
+    );
+  }
+
+  // ==========================================================================
+  // CHECK-IN REQUIRED VIEW
+  // ==========================================================================
+
+  Widget _buildCheckInRequiredView(double width) {
+    final compact = width < 380;
+    final data = _notCheckedInDoc?.data() ?? {};
+    final hosp = _hospital?.isNotEmpty == true ? _hospital! : 'Hospital';
+    final doc = _doctorName?.isNotEmpty == true ? _doctorName! : 'Doctor';
+    final dLabel = data['dateLabel']?.toString() ?? _date ?? '';
+    final sess = _session ?? '';
+    final qNo = _yourQueueNumber.toString().padLeft(2, '0');
+    final isPending = (data['status']?.toString().toLowerCase() == 'pending');
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SizedBox(
+                    width: compact ? 40 : 42,
+                    height: compact ? 40 : 42,
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFF063E3E),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: isPending ? const Color(0xFFFEF3C7) : const Color(0xFFE0F2F1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isPending ? Icons.hourglass_top_rounded : Icons.how_to_reg_rounded,
+                size: 38,
+                color: isPending ? const Color(0xFFD97706) : const Color(0xFF00827D),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              isPending ? 'Appointment Pending OPD Confirmation' : 'Check-In Required for Live Queue',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: compact ? 17 : 19,
+                fontWeight: FontWeight.bold,
+                color: const Color(0xFF063E3E),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isPending
+                  ? 'Your appointment has been submitted and is awaiting OPD confirmation. Once confirmed, you can check in to join the live waiting queue.'
+                  : 'Please check in when you arrive at the hospital to enter the live queue and track your waiting time in real time.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF5A7272),
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFD6E5E5)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Reserved Queue Token',
+                        style: TextStyle(
+                          fontSize: compact ? 12 : 13,
+                          color: const Color(0xFF789090),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00827D),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '#$qNo',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  _buildSummaryRow('Hospital', hosp),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow('Doctor', doc),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow('Date & Session', '$dLabel · $sess'),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow('Patient', _patientName?.isNotEmpty == true ? _patientName! : 'You'),
+                  if (_nic != null && _nic!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    _buildSummaryRow('NIC / User ID', _nic!),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  final checkInAppt = CheckInAppointment(
+                    appointmentId: _appointmentId ?? '',
+                    nic: _nic ?? '',
+                    hospital: hosp,
+                    date: dLabel,
+                    session: sess,
+                    doctor: doc,
+                    speciality: data['speciality']?.toString() ?? '',
+                    patient: _patientName ?? '',
+                    contact: data['contact']?.toString() ?? '',
+                    estimatedQueueNumber: _yourQueueNumber.toString(),
+                  );
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CheckInScreen(
+                        bookedAppointment: checkInAppt,
+                        onCheckIn: (confirmed) {
+                          _applyInitialAppointment(confirmed);
+                          _loadQueueData();
+                        },
+                      ),
+                    ),
+                  ).then((_) => _loadQueueData());
+                },
+                icon: const Icon(Icons.check_circle_outline, size: 20),
+                label: Text(
+                  isPending ? 'Proceed to Check In' : 'Check In to Live Queue',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00827D),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.of(context).popUntil((r) => r.isFirst);
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF00827D),
+                  side: const BorderSide(color: Color(0xFF00827D)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                ),
+                child: const Text('Back to Home'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF789090)),
+        ),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF063E3E),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -750,32 +1205,41 @@ class _QueueStatusScreenState
             const SizedBox(
               height: 20,
             ),
-            SizedBox(
-              width: 150,
-              height: 44,
-              child: ElevatedButton(
-                onPressed:
-                    _loadQueueData,
-                style:
-                    ElevatedButton.styleFrom(
-                  backgroundColor:
-                      const Color(
-                    0xFF00827D,
-                  ),
-                  foregroundColor:
-                      Colors.white,
-                  elevation: 0,
-                  shape:
-                      RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(
-                      24,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CheckInScreen(),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF00827D),
+                    side: const BorderSide(color: Color(0xFF00827D)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
                     ),
                   ),
+                  child: const Text('Check In with NIC'),
                 ),
-                child:
-                    const Text('Retry'),
-              ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: _loadQueueData,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00827D),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                  child: const Text('Retry'),
+                ),
+              ],
             ),
           ],
         ),
@@ -930,134 +1394,75 @@ class _QueueStatusScreenState
   // CURRENTLY SERVING CARD
   // ==========================================================================
 
-  Widget _buildCurrentlyServingCard(
-    bool compact,
-  ) {
-    final serving =
-        _currentlyServing;
+  Widget _buildCurrentlyServingCard(bool compact) {
+    final serving = _currentlyServing;
+    final doctor = _doctorName?.isNotEmpty == true
+        ? _doctorName!
+        : (serving.doctorName.isNotEmpty ? serving.doctorName : 'Dr. R. Fernando');
 
     return Container(
       width: double.infinity,
-      constraints:
-          BoxConstraints(
-        minHeight:
-            compact ? 138 : 150,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 14 : 16,
+        vertical: compact ? 13 : 15,
       ),
-      padding:
-          EdgeInsets.fromLTRB(
-        compact ? 14 : 16,
-        compact ? 13 : 15,
-        compact ? 14 : 16,
-        compact ? 14 : 16,
-      ),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF00827D),
-        borderRadius:
-            BorderRadius.circular(
-          16,
-        ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF007471),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'CURRENTLY SERVING',
             style: TextStyle(
-              color:
-                  Colors.white,
-              fontSize:
-                  compact ? 10 : 11,
-              fontWeight:
-                  FontWeight.w700,
-              letterSpacing:
-                  0.3,
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
             ),
           ),
-          SizedBox(
-            height:
-                compact ? 9 : 11,
-          ),
+          const SizedBox(height: 12),
           Row(
-            crossAxisAlignment:
-                CrossAxisAlignment
-                    .center,
             children: [
               Container(
-                padding:
-                    EdgeInsets.symmetric(
-                  horizontal:
-                      compact ? 11 : 13,
-                  vertical:
-                      compact ? 7 : 8,
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 10 : 12,
+                  vertical: compact ? 6 : 7,
                 ),
-                decoration:
-                    BoxDecoration(
-                  color:
-                      Colors.white,
-                  borderRadius:
-                      BorderRadius.circular(
-                    8,
-                  ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'T-${serving.queueNumber}',
-                  style:
-                      TextStyle(
-                    color:
-                        const Color(
-                      0xFF00827D,
-                    ),
-                    fontSize:
-                        compact ? 18 : 20,
-                    fontWeight:
-                        FontWeight.w900,
+                  style: TextStyle(
+                    color: const Color(0xFF007471),
+                    fontSize: compact ? 17 : 19,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              const SizedBox(
-                width: 10,
-              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  serving
-                      .patientName,
+                  doctor,
                   maxLines: 1,
-                  overflow:
-                      TextOverflow
-                          .ellipsis,
-                  style:
-                      TextStyle(
-                    color:
-                        Colors.white,
-                    fontSize:
-                        compact
-                            ? 11
-                            : 12,
-                    fontWeight:
-                        FontWeight.w500,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: compact ? 13 : 14,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-              const SizedBox(
-                width: 8,
-              ),
+              const SizedBox(width: 8),
               Text(
-                serving.status
-                            .toLowerCase() ==
-                        'waiting'
-                    ? 'In Consult'
-                    : serving.status,
-                style:
-                    TextStyle(
-                  color:
-                      Colors.white,
-                  fontSize:
-                      compact ? 9 : 10,
-                  fontWeight:
-                      FontWeight.w700,
+                'In Consult',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  fontSize: compact ? 10 : 11,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -1145,22 +1550,14 @@ class _QueueStatusScreenState
   Widget _buildCurrentQueueTitle(
     bool compact,
   ) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 22,
-      ),
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16),
       child: Text(
         'Current Queue',
         style: TextStyle(
-          fontSize:
-              compact ? 13 : 14,
-          fontWeight:
-              FontWeight.w500,
-          color:
-              const Color(
-            0xFF00827D,
-          ),
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF007471),
         ),
       ),
     );
@@ -1175,11 +1572,11 @@ class _QueueStatusScreenState
   ) {
     return SizedBox(
       height:
-          compact ? 58 : 62,
+          compact ? 56 : 60,
       child: ListView.separated(
         padding:
             const EdgeInsets.symmetric(
-          horizontal: 22,
+          horizontal: 16,
         ),
         scrollDirection:
             Axis.horizontal,
@@ -1190,7 +1587,7 @@ class _QueueStatusScreenState
         separatorBuilder:
             (_, _) =>
                 const SizedBox(
-          width: 13,
+          width: 10,
         ),
         itemBuilder:
             (context, index) {
@@ -1232,7 +1629,7 @@ class _QueueStatusScreenState
           BoxDecoration(
         color: isSelected
             ? const Color(
-                0xFF39A49E,
+                0xFF00827D,
               )
             : Colors.white,
         borderRadius:
@@ -1241,12 +1638,10 @@ class _QueueStatusScreenState
         ),
         border:
             Border.all(
-          color:
-              const Color(
-            0xFF00827D,
-          ),
-          width:
-              isSelected ? 0 : 1.6,
+          color: isSelected
+              ? const Color(0xFF00827D)
+              : const Color(0xFFD6E5E5),
+          width: 1.5,
         ),
         boxShadow: isSelected
             ? [
@@ -1274,7 +1669,7 @@ class _QueueStatusScreenState
               compact ? 19 : 20,
           fontWeight: isSelected
               ? FontWeight.w900
-              : FontWeight.w500,
+              : FontWeight.w600,
           color: isSelected
               ? Colors.white
               : const Color(
@@ -1293,89 +1688,28 @@ class _QueueStatusScreenState
     bool compact,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 22,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: _buildInfoItem(
-              title: 'Est. Wait',
-              value:
-                  '$_estimatedWaitingMinutes mins',
-              compact:
-                  compact,
+          Text(
+            'Est. Wait: $_estimatedWaitingMinutes mins',
+            style: const TextStyle(
+              color: Color(0xFF789090),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(
-            width: 12,
-          ),
-          Expanded(
-            child: Align(
-              alignment:
-                  Alignment.centerRight,
-              child: _buildInfoItem(
-                title:
-                    'Patient Ahead',
-                value:
-                    '$_patientsAhead',
-                compact:
-                    compact,
-                alignRight:
-                    true,
-              ),
+          Text(
+            '${_patientsAhead.toString().padLeft(2, '0')} Patient Ahead',
+            style: const TextStyle(
+              color: Color(0xFF789090),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildInfoItem({
-    required String title,
-    required String value,
-    required bool compact,
-    bool alignRight = false,
-  }) {
-    return Column(
-      crossAxisAlignment:
-          alignRight
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: TextStyle(
-            color:
-                const Color(
-              0xFF00827D,
-            ),
-            fontSize:
-                compact ? 10 : 11,
-            fontWeight:
-                FontWeight.w500,
-          ),
-        ),
-        const SizedBox(
-          height: 4,
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            color:
-                const Color(
-              0xFF00827D,
-            ),
-            fontSize:
-                compact ? 10 : 11,
-            fontWeight:
-                FontWeight.w500,
-          ),
-        ),
-      ],
     );
   }
 
@@ -1389,12 +1723,11 @@ class _QueueStatusScreenState
     return Padding(
       padding:
           const EdgeInsets.symmetric(
-        horizontal: 8,
+        horizontal: 16,
       ),
       child: SizedBox(
         width: double.infinity,
-        height:
-            compact ? 44 : 48,
+        height: 48,
         child: ElevatedButton(
           onPressed:
               _openEstimatedWaitingTime,
@@ -1408,20 +1741,13 @@ class _QueueStatusScreenState
                 Colors.white,
             elevation: 0,
             shape:
-                RoundedRectangleBorder(
-              borderRadius:
-                  BorderRadius.circular(
-                24,
-              ),
-            ),
+                const StadiumBorder(),
           ),
-          child: Text(
+          child: const Text(
             'Next',
             style: TextStyle(
-              fontSize:
-                  compact ? 13 : 14,
-              fontWeight:
-                  FontWeight.w600,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),
@@ -1457,152 +1783,7 @@ class _QueueStatusScreenState
   Widget _buildBottomNavigation(
     double width,
   ) {
-    final compact =
-        width < 380;
-
-    return Container(
-      width: double.infinity,
-      height:
-          compact ? 66 : 72,
-      decoration:
-          const BoxDecoration(
-        color: Colors.white,
-        border:
-            Border(
-          top: BorderSide(
-            color:
-                Color(0xFFE1E9E8),
-            width: 1,
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          _buildNavItem(
-            icon:
-                Icons.home_outlined,
-            selectedIcon:
-                Icons.home_rounded,
-            label: 'Home',
-            index: 0,
-            compact:
-                compact,
-          ),
-          _buildNavItem(
-            icon: Icons
-                .calendar_today_outlined,
-            selectedIcon: Icons
-                .calendar_month_rounded,
-            label:
-                'Appointments',
-            index: 1,
-            compact:
-                compact,
-          ),
-          _buildNavItem(
-            icon: Icons
-                .format_list_bulleted,
-            selectedIcon: Icons
-                .format_list_bulleted,
-            label: 'Queue',
-            index: 2,
-            compact:
-                compact,
-          ),
-          _buildNavItem(
-            icon: Icons
-                .notifications_none_rounded,
-            selectedIcon: Icons
-                .notifications_rounded,
-            label: 'Alerts',
-            index: 3,
-            compact:
-                compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavItem({
-    required IconData icon,
-    required IconData selectedIcon,
-    required String label,
-    required int index,
-    required bool compact,
-  }) {
-    final selected =
-        _selectedBottomIndex ==
-            index;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          if (index == 2) {
-            return;
-          }
-
-          _handleNavigation(index);
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected
-                  ? selectedIcon
-                  : icon,
-              size:
-                  compact ? 21 : 23,
-              color: selected
-                  ? const Color(
-                      0xFF00827D,
-                    )
-                  : const Color(
-                      0xFF789090,
-                    ),
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              label,
-              maxLines: 1,
-              overflow:
-                  TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize:
-                    compact ? 8 : 9,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-                color: selected
-                    ? const Color(
-                        0xFF00827D,
-                      )
-                    : const Color(
-                        0xFF789090,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _handleNavigation(
-    int index,
-  ) {
-    if (index == 2) {
-      return;
-    }
-
-    QueueNavigationCenter
-        .goToTab(
-      context,
-      index,
-    );
+    return const QueueBottomBar(selectedIndex: -1);
   }
 }
 
@@ -1649,8 +1830,6 @@ class _EstimatedWaitingTimeScreenState
   late int _patientsAhead;
   late int _averageMinutes;
   late List<QueuePatient> _patients;
-
-  final int _selectedBottomIndex = 2;
 
   @override
   void initState() {
@@ -1863,6 +2042,11 @@ class _EstimatedWaitingTimeScreenState
     final compact =
         width < 380;
 
+    final estimatedWait = math.max(
+      1,
+      _patientsAhead * _averageMinutes,
+    );
+
     return Padding(
       padding:
           EdgeInsets.symmetric(
@@ -1877,21 +2061,40 @@ class _EstimatedWaitingTimeScreenState
             height:
                 compact ? 8 : 12,
           ),
-          const Text(
-            'Estimated Waiting Time',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight:
-                  FontWeight.w800,
-              color:
-                  Color(0xFF063E3E),
-              letterSpacing:
-                  -0.4,
-            ),
+          Row(
+            children: [
+              Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SizedBox(
+                    width: compact ? 40 : 42,
+                    height: compact ? 40 : 42,
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFF063E3E),
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Queue Status',
+                style: TextStyle(
+                  fontSize: compact ? 22 : 25,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF063E3E),
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
           SizedBox(
             height:
-                compact ? 32 : 42,
+                compact ? 24 : 32,
           ),
           Center(
             child:
@@ -1899,45 +2102,111 @@ class _EstimatedWaitingTimeScreenState
               compact,
             ),
           ),
+          const SizedBox(height: 14),
+          Center(
+            child: Column(
+              children: [
+                const Text(
+                  'AVG Time Per Patient',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF789090),
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$_averageMinutes min',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF063E3E),
+                  ),
+                ),
+              ],
+            ),
+          ),
           SizedBox(
             height:
-                compact ? 34 : 40,
+                compact ? 24 : 28,
           ),
           const Padding(
             padding:
                 EdgeInsets.symmetric(
-              horizontal: 22,
+              horizontal: 16,
             ),
             child: Text(
               'Current Queue',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight:
-                    FontWeight.w500,
+                    FontWeight.bold,
                 color:
-                    Color(0xFF00827D),
+                    Color(0xFF007471),
               ),
             ),
           ),
           const SizedBox(
-            height: 12,
+            height: 10,
           ),
           _buildQueueStrip(
             compact,
           ),
           SizedBox(
             height:
-                compact ? 16 : 18,
+                compact ? 12 : 14,
           ),
-          _buildEstimatedInformation(
-            compact,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Est. Wait: $estimatedWait mins',
+                  style: const TextStyle(
+                    color: Color(0xFF789090),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  '${_patientsAhead.toString().padLeft(2, '0')} Patient Ahead',
+                  style: const TextStyle(
+                    color: Color(0xFF789090),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
           ),
           SizedBox(
             height:
                 compact ? 24 : 28,
           ),
-          _buildEstimatedNextButton(
-            compact,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: _openMyTurn,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF007471),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: const StadiumBorder(),
+                ),
+                child: const Text(
+                  'Next',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           ),
           SizedBox(
             height:
@@ -1975,7 +2244,7 @@ class _EstimatedWaitingTimeScreenState
                   fontSize:
                       compact ? 25 : 27,
                   fontWeight:
-                      FontWeight.w800,
+                      FontWeight.w900,
                   color:
                       const Color(
                     0xFF00827D,
@@ -1987,9 +2256,9 @@ class _EstimatedWaitingTimeScreenState
                 style:
                     TextStyle(
                   fontSize:
-                      compact ? 24 : 26,
+                      compact ? 16 : 18,
                   fontWeight:
-                      FontWeight.w800,
+                      FontWeight.bold,
                   color:
                       const Color(
                     0xFF00827D,
@@ -2012,7 +2281,7 @@ class _EstimatedWaitingTimeScreenState
       child: ListView.separated(
         padding:
             const EdgeInsets.symmetric(
-          horizontal: 22,
+          horizontal: 16,
         ),
         scrollDirection:
             Axis.horizontal,
@@ -2023,7 +2292,7 @@ class _EstimatedWaitingTimeScreenState
         separatorBuilder:
             (_, _) =>
                 const SizedBox(
-          width: 12,
+          width: 10,
         ),
         itemBuilder:
             (context, index) {
@@ -2051,7 +2320,7 @@ class _EstimatedWaitingTimeScreenState
                 BoxDecoration(
               color: selected
                   ? const Color(
-                      0xFF39A49E,
+                      0xFF00827D,
                     )
                   : Colors.white,
               borderRadius:
@@ -2060,12 +2329,10 @@ class _EstimatedWaitingTimeScreenState
               ),
               border:
                   Border.all(
-                color:
-                    const Color(
-                  0xFF00827D,
-                ),
-                width:
-                    selected ? 0 : 1.5,
+                color: selected
+                    ? const Color(0xFF00827D)
+                    : const Color(0xFFD6E5E5),
+                width: 1.5,
               ),
             ),
             child: Text(
@@ -2076,7 +2343,7 @@ class _EstimatedWaitingTimeScreenState
                 fontWeight:
                     selected
                         ? FontWeight.w900
-                        : FontWeight.w500,
+                        : FontWeight.w600,
                 color: selected
                     ? Colors.white
                     : const Color(
@@ -2090,241 +2357,10 @@ class _EstimatedWaitingTimeScreenState
     );
   }
 
-  Widget _buildEstimatedInformation(
-    bool compact,
-  ) {
-    final estimatedWait =
-        math.max(
-      1,
-      _patientsAhead *
-          _averageMinutes,
-    );
-
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 22,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _smallInfo(
-              'Est. Wait',
-              '$estimatedWait mins',
-            ),
-          ),
-          Expanded(
-            child: Align(
-              alignment:
-                  Alignment.centerRight,
-              child: _smallInfo(
-                'Patient Ahead',
-                '$_patientsAhead',
-                right: true,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _smallInfo(
-    String title,
-    String value, {
-    bool right = false,
-  }) {
-    return Column(
-      crossAxisAlignment:
-          right
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style:
-              const TextStyle(
-            fontSize: 10,
-            color:
-                Color(0xFF00827D),
-          ),
-        ),
-        const SizedBox(
-          height: 4,
-        ),
-        Text(
-          value,
-          style:
-              const TextStyle(
-            fontSize: 10,
-            color:
-                Color(0xFF00827D),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEstimatedNextButton(
-    bool compact,
-  ) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 8,
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        height:
-            compact ? 44 : 48,
-        child: ElevatedButton(
-          onPressed:
-              _openMyTurn,
-          style:
-              ElevatedButton.styleFrom(
-            backgroundColor:
-                const Color(
-              0xFF00827D,
-            ),
-            foregroundColor:
-                Colors.white,
-            elevation: 0,
-            shape:
-                RoundedRectangleBorder(
-              borderRadius:
-                  BorderRadius.circular(
-                24,
-              ),
-            ),
-          ),
-          child:
-              const Text(
-            'Next',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight:
-                  FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildBottomNavigation(
     double width,
   ) {
-    final compact =
-        width < 380;
-
-    return Container(
-      height:
-          compact ? 66 : 72,
-      color: Colors.white,
-      child: Row(
-        children: [
-          _estimatedNavItem(
-            Icons.home_outlined,
-            Icons.home_rounded,
-            'Home',
-            0,
-            compact,
-          ),
-          _estimatedNavItem(
-            Icons
-                .calendar_today_outlined,
-            Icons
-                .calendar_month_rounded,
-            'Appointments',
-            1,
-            compact,
-          ),
-          _estimatedNavItem(
-            Icons
-                .format_list_bulleted,
-            Icons
-                .format_list_bulleted,
-            'Queue',
-            2,
-            compact,
-          ),
-          _estimatedNavItem(
-            Icons
-                .notifications_none_rounded,
-            Icons
-                .notifications_rounded,
-            'Alerts',
-            3,
-            compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _estimatedNavItem(
-    IconData icon,
-    IconData selectedIcon,
-    String label,
-    int index,
-    bool compact,
-  ) {
-    final selected =
-        index ==
-            _selectedBottomIndex;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          QueueNavigationCenter
-              .goToTab(
-            context,
-            index,
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected
-                  ? selectedIcon
-                  : icon,
-              size:
-                  compact ? 21 : 23,
-              color: selected
-                  ? const Color(
-                      0xFF00827D,
-                    )
-                  : const Color(
-                      0xFF789090,
-                    ),
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              label,
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 8 : 9,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-                color: selected
-                    ? const Color(
-                        0xFF00827D,
-                      )
-                    : const Color(
-                        0xFF789090,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const QueueBottomBar(selectedIndex: -1);
   }
 }
 
@@ -2356,9 +2392,6 @@ class _MyTurnScreenState
 
   int _remainingSeconds =
       5 * 60;
-
-  final int _selectedBottomIndex =
-      0;
 
   bool _handled = false;
 
@@ -2582,27 +2615,40 @@ class _MyTurnScreenState
             height:
                 compact ? 8 : 12,
           ),
-          Align(
-            alignment:
-                Alignment.centerLeft,
-            child: Text(
-              'My Turn',
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 21 : 23,
-                fontWeight:
-                    FontWeight.w800,
-                color:
-                    const Color(
-                  0xFF063E3E,
+          Row(
+            children: [
+              Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SizedBox(
+                    width: compact ? 40 : 42,
+                    height: compact ? 40 : 42,
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFF063E3E),
+                      size: 22,
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Text(
+                'Queue Status',
+                style: TextStyle(
+                  fontSize: compact ? 22 : 25,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF063E3E),
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
           SizedBox(
             height:
-                compact ? 100 : 125,
+                compact ? 36 : 48,
           ),
           Container(
             width:
@@ -2612,27 +2658,26 @@ class _MyTurnScreenState
             decoration:
                 const BoxDecoration(
               color:
-                  Color(0xFF39A49E),
+                  Color(0xFF007471),
               shape:
                   BoxShape.circle,
             ),
             child:
                 const Icon(
-              Icons.notifications,
+              Icons.notifications_active_rounded,
               color: Colors.white,
-              size: 42,
+              size: 38,
             ),
           ),
-          SizedBox(
-            height:
-                compact ? 14 : 18,
+          const SizedBox(
+            height: 18,
           ),
           Text(
             'Its Your Turn',
             style:
                 TextStyle(
               fontSize:
-                  compact ? 20 : 21,
+                  compact ? 22 : 24,
               fontWeight:
                   FontWeight.w900,
               color:
@@ -2642,130 +2687,107 @@ class _MyTurnScreenState
             ),
           ),
           const SizedBox(
-            height: 2,
+            height: 8,
           ),
           const Text(
-            'Please Process to consultation',
+            'Please Proceed to consultation\nRoom 03',
+            textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 14,
               color:
-                  Color(0xFF00827D),
+                  Color(0xFF789090),
+              height: 1.35,
               fontWeight:
                   FontWeight.w500,
             ),
           ),
-          const Text(
-            'Room 03',
-            style: TextStyle(
-              fontSize: 12,
-              color:
-                  Color(0xFF00827D),
-              fontWeight:
-                  FontWeight.w800,
+          SizedBox(
+            height:
+                compact ? 40 : 52,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _onMyWay,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF007471),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text(
+                      'On My Way',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(
+                  height: 12,
+                ),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _needMoreTime,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF063A37),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text(
+                      'Need More Time',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(
+                  height: 14,
+                ),
+                const Text(
+                  'No response in 5 min → Position is Changed',
+                  textAlign: TextAlign.center,
+                  style:
+                      TextStyle(
+                    fontSize: 11,
+                    fontWeight:
+                        FontWeight.w500,
+                    color:
+                        Color(0xFF789090),
+                  ),
+                ),
+                const SizedBox(
+                  height: 4,
+                ),
+                Text(
+                  '$_remainingText remaining',
+                  textAlign: TextAlign.center,
+                  style:
+                      const TextStyle(
+                    fontSize: 10,
+                    color:
+                        Color(0xFF789090),
+                  ),
+                ),
+              ],
             ),
           ),
           SizedBox(
             height:
-                compact ? 112 : 130,
-          ),
-          _buildMyTurnButton(
-            label: 'On My Way',
-            color:
-                const Color(
-              0xFF39A49E,
-            ),
-            onPressed:
-                _onMyWay,
-          ),
-          const SizedBox(
-            height: 12,
-          ),
-          _buildMyTurnButton(
-            label:
-                'Need More Time',
-            color:
-                const Color(
-              0xFF00827D,
-            ),
-            onPressed:
-                _needMoreTime,
-          ),
-          const SizedBox(
-            height: 10,
-          ),
-          Text(
-            'No response in 5 min → Position is Changed',
-            style:
-                TextStyle(
-              fontSize:
-                  compact ? 10 : 11,
-              fontWeight:
-                  FontWeight.w500,
-              color:
-                  const Color(
-                0xFF00827D,
-              ),
-            ),
-          ),
-          const SizedBox(
-            height: 6,
-          ),
-          Text(
-            '$_remainingText remaining',
-            style:
-                TextStyle(
-              fontSize:
-                  compact ? 9 : 10,
-              color:
-                  const Color(
-                0xFF789090,
-              ),
-            ),
-          ),
-          SizedBox(
-            height:
-                compact ? 14 : 20,
+                compact ? 16 : 22,
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMyTurnButton({
-    required String label,
-    required Color color,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: ElevatedButton(
-        onPressed:
-            onPressed,
-        style:
-            ElevatedButton.styleFrom(
-          backgroundColor:
-              color,
-          foregroundColor:
-              Colors.white,
-          elevation: 0,
-          shape:
-              RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(
-              24,
-            ),
-          ),
-        ),
-        child: Text(
-          label,
-          style:
-              const TextStyle(
-            fontSize: 13,
-            fontWeight:
-                FontWeight.w600,
-          ),
-        ),
       ),
     );
   }
@@ -2773,117 +2795,7 @@ class _MyTurnScreenState
   Widget _buildBottomNavigation(
     double width,
   ) {
-    final compact =
-        width < 380;
-
-    return Container(
-      height:
-          compact ? 66 : 72,
-      color: Colors.white,
-      child: Row(
-        children: [
-          _myTurnNav(
-            Icons.home_outlined,
-            Icons.home_rounded,
-            'Home',
-            0,
-            compact,
-          ),
-          _myTurnNav(
-            Icons
-                .calendar_today_outlined,
-            Icons
-                .calendar_month_rounded,
-            'Appointments',
-            1,
-            compact,
-          ),
-          _myTurnNav(
-            Icons
-                .format_list_bulleted,
-            Icons
-                .format_list_bulleted,
-            'Queue',
-            2,
-            compact,
-          ),
-          _myTurnNav(
-            Icons
-                .notifications_none_rounded,
-            Icons
-                .notifications_rounded,
-            'Alerts',
-            3,
-            compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _myTurnNav(
-    IconData icon,
-    IconData selectedIcon,
-    String label,
-    int index,
-    bool compact,
-  ) {
-    final selected =
-        index ==
-            _selectedBottomIndex;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          QueueNavigationCenter
-              .goToTab(
-            context,
-            index,
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected
-                  ? selectedIcon
-                  : icon,
-              size:
-                  compact ? 21 : 23,
-              color: selected
-                  ? const Color(
-                      0xFF00827D,
-                    )
-                  : const Color(
-                      0xFF789090,
-                    ),
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              label,
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 8 : 9,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-                color: selected
-                    ? const Color(
-                        0xFF00827D,
-                      )
-                    : const Color(
-                        0xFF789090,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const QueueBottomBar(selectedIndex: -1);
   }
 }
 
@@ -2913,9 +2825,6 @@ class MissedMyTurnScreen
 class _MissedMyTurnScreenState
     extends State<
         MissedMyTurnScreen> {
-  final int _selectedBottomIndex =
-      0;
-
   int get _newQueueNumber {
     if (widget.patients.isEmpty) {
       return widget
@@ -3137,44 +3046,56 @@ class _MissedMyTurnScreenState
             height:
                 compact ? 8 : 12,
           ),
-          Align(
-            alignment:
-                Alignment.centerLeft,
-            child: Text(
-              'Missed My Turn',
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 21 : 23,
-                fontWeight:
-                    FontWeight.w800,
-                color:
-                    const Color(
-                  0xFF063E3E,
+          Row(
+            children: [
+              Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SizedBox(
+                    width: compact ? 40 : 42,
+                    height: compact ? 40 : 42,
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFF063E3E),
+                      size: 22,
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Text(
+                'Queue Status',
+                style: TextStyle(
+                  fontSize: compact ? 22 : 25,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF063E3E),
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
           SizedBox(
             height:
-                compact ? 120 : 140,
+                compact ? 36 : 48,
           ),
-          const Icon(
-            Icons.warning,
-            color:
-                Color(0xFF39A49E),
-            size: 78,
+          Icon(
+            Icons.warning_rounded,
+            color: const Color(0xFF007471),
+            size: compact ? 72 : 82,
           ),
           SizedBox(
             height:
-                compact ? 12 : 16,
+                compact ? 14 : 18,
           ),
           Text(
             'You Missed Your Turn',
             style:
                 TextStyle(
               fontSize:
-                  compact ? 19 : 20,
+                  compact ? 22 : 24,
               fontWeight:
                   FontWeight.w900,
               color:
@@ -3184,67 +3105,99 @@ class _MissedMyTurnScreenState
             ),
           ),
           const SizedBox(
-            height: 2,
+            height: 6,
           ),
           const Text(
             'Don’t Worry, You Can Rejoin The Queue',
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 13,
               color:
-                  Color(0xFF00827D),
+                  Color(0xFF789090),
               fontWeight:
                   FontWeight.w500,
             ),
           ),
           SizedBox(
             height:
-                compact ? 82 : 98,
+                compact ? 36 : 48,
           ),
-          _missedButton(
-            label: 'Rejoin',
-            color:
-                const Color(
-              0xFF39A49E,
-            ),
-            onPressed:
-                _rejoinQueue,
-          ),
-          const SizedBox(
-            height: 10,
-          ),
-          _missedButton(
-            label:
-                'Contact Support',
-            color:
-                const Color(
-              0xFF00827D,
-            ),
-            onPressed:
-                _contactSupport,
-          ),
-          const SizedBox(
-            height: 10,
-          ),
-          _missedButton(
-            label: 'Cancel',
-            color:
-                const Color(
-              0xFF00827D,
-            ),
-            onPressed:
-                _cancel,
-          ),
-          const SizedBox(
-            height: 10,
-          ),
-          const Text(
-            'No response in 5 min → Position is Changed',
-            style: TextStyle(
-              fontSize: 10,
-              color:
-                  Color(0xFF00827D),
-              fontWeight:
-                  FontWeight.w500,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _rejoinQueue,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF007471),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text(
+                      'Rejoin',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _contactSupport,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF007471),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text(
+                      'Contact Support',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _cancel,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF007471),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'No response in 5 min → Position is Changed',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF789090),
+                  ),
+                ),
+              ],
             ),
           ),
           SizedBox(
@@ -3256,159 +3209,11 @@ class _MissedMyTurnScreenState
     );
   }
 
-  Widget _missedButton({
-    required String label,
-    required Color color,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: ElevatedButton(
-        onPressed:
-            onPressed,
-        style:
-            ElevatedButton.styleFrom(
-          backgroundColor:
-              color,
-          foregroundColor:
-              Colors.white,
-          elevation: 0,
-          shape:
-              RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(
-              24,
-            ),
-          ),
-        ),
-        child: Text(
-          label,
-          style:
-              const TextStyle(
-            fontSize: 13,
-            fontWeight:
-                FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildBottomNavigation(
     double width,
   ) {
-    final compact =
-        width < 380;
-
-    return Container(
-      height:
-          compact ? 66 : 72,
-      color: Colors.white,
-      child: Row(
-        children: [
-          _missedNav(
-            Icons.home_outlined,
-            Icons.home_rounded,
-            'Home',
-            0,
-            compact,
-          ),
-          _missedNav(
-            Icons
-                .calendar_today_outlined,
-            Icons
-                .calendar_month_rounded,
-            'Appointments',
-            1,
-            compact,
-          ),
-          _missedNav(
-            Icons
-                .format_list_bulleted,
-            Icons
-                .format_list_bulleted,
-            'Queue',
-            2,
-            compact,
-          ),
-          _missedNav(
-            Icons
-                .notifications_none_rounded,
-            Icons
-                .notifications_rounded,
-            'Alerts',
-            3,
-            compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _missedNav(
-    IconData icon,
-    IconData selectedIcon,
-    String label,
-    int index,
-    bool compact,
-  ) {
-    final selected =
-        index ==
-            _selectedBottomIndex;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          QueueNavigationCenter
-              .goToTab(
-            context,
-            index,
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected
-                  ? selectedIcon
-                  : icon,
-              size:
-                  compact ? 21 : 23,
-              color: selected
-                  ? const Color(
-                      0xFF00827D,
-                    )
-                  : const Color(
-                      0xFF789090,
-                    ),
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              label,
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 8 : 9,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-                color: selected
-                    ? const Color(
-                        0xFF00827D,
-                      )
-                    : const Color(
-                        0xFF789090,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const QueueBottomBar(selectedIndex: -1);
   }
 }
 
@@ -3442,9 +3247,6 @@ class NewQueueStatusScreen
 class _NewQueueStatusScreenState
     extends State<
         NewQueueStatusScreen> {
-  final int _selectedBottomIndex =
-      2;
-
   QueueLiveWatcher? _watcher;
   QueueLiveData? _live;
 
@@ -3619,30 +3421,47 @@ class _NewQueueStatusScreenState
             height:
                 compact ? 8 : 12,
           ),
-          Text(
-            'New Queue Status',
-            style:
-                TextStyle(
-              fontSize:
-                  compact ? 21 : 23,
-              fontWeight:
-                  FontWeight.w800,
-              color:
-                  const Color(
-                0xFF063E3E,
+          Row(
+            children: [
+              Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SizedBox(
+                    width: compact ? 40 : 42,
+                    height: compact ? 40 : 42,
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFF063E3E),
+                      size: 22,
+                    ),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Text(
+                'Queue Status',
+                style: TextStyle(
+                  fontSize: compact ? 22 : 25,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF063E3E),
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
           SizedBox(
             height:
-                compact ? 8 : 10,
+                compact ? 12 : 16,
           ),
           _buildServingCard(
             compact,
           ),
           SizedBox(
             height:
-                compact ? 32 : 36,
+                compact ? 24 : 32,
           ),
           Center(
             child: CustomPaint(
@@ -3650,14 +3469,13 @@ class _NewQueueStatusScreenState
                   _QueueSignalPainter(),
               size:
                   const Size(
-                42,
-                42,
+                40,
+                40,
               ),
             ),
           ),
-          SizedBox(
-            height:
-                compact ? 8 : 10,
+          const SizedBox(
+            height: 8,
           ),
           Center(
             child: Text(
@@ -3665,9 +3483,9 @@ class _NewQueueStatusScreenState
               style:
                   TextStyle(
                 fontSize:
-                    compact ? 20 : 21,
+                    compact ? 19 : 21,
                 fontWeight:
-                    FontWeight.w900,
+                    FontWeight.w800,
                 color:
                     const Color(
                   0xFF063E3E,
@@ -3676,7 +3494,7 @@ class _NewQueueStatusScreenState
             ),
           ),
           const SizedBox(
-            height: 2,
+            height: 4,
           ),
           Center(
             child: Text(
@@ -3684,64 +3502,65 @@ class _NewQueueStatusScreenState
               style:
                   TextStyle(
                 fontSize:
-                    compact ? 48 : 54,
+                    compact ? 44 : 52,
                 height: 1,
                 fontWeight:
                     FontWeight.w900,
                 color:
                     const Color(
-                  0xFF00827D,
+                  0xFF007471,
                 ),
               ),
             ),
           ),
           SizedBox(
             height:
-                compact ? 30 : 36,
+                compact ? 24 : 30,
           ),
           const Padding(
             padding:
                 EdgeInsets.symmetric(
-              horizontal: 22,
+              horizontal: 4,
             ),
             child: Text(
               'Current Queue',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight:
-                    FontWeight.w500,
+                    FontWeight.w600,
                 color:
-                    Color(0xFF00827D),
+                    Color(0xFF007471),
               ),
             ),
           ),
           const SizedBox(
-            height: 12,
+            height: 10,
           ),
           _buildNewQueueScroller(
             compact,
           ),
-          SizedBox(
-            height:
-                compact ? 16 : 18,
+          const SizedBox(
+            height: 12,
           ),
           Padding(
             padding:
                 const EdgeInsets.symmetric(
-              horizontal: 22,
+              horizontal: 6,
             ),
             child: Row(
+              mainAxisAlignment:
+                  MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(
-                  child: Text(
-                    'Est. Wait: $_estimatedMinutes mins',
-                    style:
-                        const TextStyle(
-                      fontSize: 10,
-                      color:
-                          Color(
-                        0xFF00827D,
-                      ),
+                Text(
+                  'Est. Wait: $_estimatedMinutes mins',
+                  style:
+                      const TextStyle(
+                    fontSize: 11,
+                    fontWeight:
+                        FontWeight.w600,
+                    color:
+                        Color(
+                      0xFF007471,
                     ),
                   ),
                 ),
@@ -3749,10 +3568,12 @@ class _NewQueueStatusScreenState
                   '$_patientsAhead Patient Ahead',
                   style:
                       const TextStyle(
-                    fontSize: 10,
+                    fontSize: 11,
+                    fontWeight:
+                        FontWeight.w600,
                     color:
                         Color(
-                      0xFF00827D,
+                      0xFF007471,
                     ),
                   ),
                 ),
@@ -3761,47 +3582,31 @@ class _NewQueueStatusScreenState
           ),
           SizedBox(
             height:
-                compact ? 24 : 28,
+                compact ? 24 : 30,
           ),
-          Padding(
-            padding:
-                const EdgeInsets.symmetric(
-              horizontal: 8,
-            ),
-            child: SizedBox(
-              width:
-                  double.infinity,
-              height: 48,
-              child:
-                  ElevatedButton(
-                onPressed: _next,
-                style:
-                    ElevatedButton
-                        .styleFrom(
-                  backgroundColor:
-                      const Color(
-                    0xFF00827D,
-                  ),
-                  foregroundColor:
-                      Colors.white,
-                  elevation: 0,
-                  shape:
-                      RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(
-                      24,
-                    ),
-                  ),
+          SizedBox(
+            width:
+                double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _next,
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    const Color(
+                  0xFF007471,
                 ),
-                child:
-                    const Text(
-                  'Next',
-                  style:
-                      TextStyle(
-                    fontSize: 13,
-                    fontWeight:
-                        FontWeight.w600,
-                  ),
+                foregroundColor:
+                    Colors.white,
+                elevation: 0,
+                shape:
+                    const StadiumBorder(),
+              ),
+              child: const Text(
+                'Next',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight:
+                      FontWeight.bold,
                 ),
               ),
             ),
@@ -3819,108 +3624,77 @@ class _NewQueueStatusScreenState
   ) {
     final serving =
         _currentlyServing;
+    final doctor = serving.doctorName.isNotEmpty ? serving.doctorName : 'Dr. R. Fernando';
 
     return Container(
       width: double.infinity,
-      height:
-          compact ? 116 : 116,
-      padding:
-          const EdgeInsets.all(
-        12,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 14 : 16,
+        vertical: compact ? 13 : 15,
       ),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF00827D),
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF007471),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'CURRENTLY SERVING',
-            style:
-                TextStyle(
-              color:
-                  Colors.white,
-              fontSize:
-                  compact ? 9 : 10,
-              fontWeight:
-                  FontWeight.w700,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
             ),
           ),
-          const SizedBox(
-            height: 10,
-          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets
-                        .symmetric(
-                  horizontal: 11,
-                  vertical: 7,
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 10 : 12,
+                  vertical: compact ? 6 : 7,
                 ),
-                decoration:
-                    BoxDecoration(
-                  color:
-                      Colors.white,
-                  borderRadius:
-                      BorderRadius.circular(
-                    7,
-                  ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'T-${serving.queueNumber}',
-                  style:
-                      const TextStyle(
-                    color:
-                        Color(
-                      0xFF00827D,
-                    ),
-                    fontSize: 17,
-                    fontWeight:
-                        FontWeight.w900,
+                  style: TextStyle(
+                    color: const Color(0xFF007471),
+                    fontSize: compact ? 17 : 19,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              const SizedBox(
-                width: 9,
-              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  serving.patientName,
+                  doctor,
                   maxLines: 1,
-                  overflow:
-                      TextOverflow
-                          .ellipsis,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                    fontSize: 9,
-                    fontWeight:
-                        FontWeight.w500,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: compact ? 13 : 14,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-              Text(
-                serving.status
-                            .toLowerCase() ==
-                        'waiting'
-                    ? 'In Consult'
-                    : serving.status,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                  fontSize: 8,
-                  fontWeight:
-                      FontWeight.w700,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'In Consult',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -3934,83 +3708,46 @@ class _NewQueueStatusScreenState
     bool compact,
   ) {
     return SizedBox(
-      height: 56,
+      height: 54,
       child: ListView.separated(
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal: 22,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 4,
         ),
-        scrollDirection:
-            Axis.horizontal,
-        physics:
-            const BouncingScrollPhysics(),
-        itemCount:
-            _patients.length,
-        separatorBuilder:
-            (_, _) =>
-                const SizedBox(
-          width: 12,
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: _patients.length,
+        separatorBuilder: (_, _) => const SizedBox(
+          width: 10,
         ),
-        itemBuilder:
-            (context, index) {
-          final patient =
-              _patients[index];
-
-          final number =
-              int.tryParse(
-            patient.queueNumber,
-          );
-
-          // Bold box = the queue number currently being served.
-          final selected =
-              number ==
-                  int.tryParse(
-                _currentlyServing
-                    .queueNumber,
-              );
+        itemBuilder: (context, index) {
+          final patient = _patients[index];
+          final number = int.tryParse(patient.queueNumber);
+          final selected = number == _yourNumber;
 
           return Container(
-            width:
-                compact ? 50 : 52,
-            height:
-                compact ? 50 : 52,
-            alignment:
-                Alignment.center,
-            decoration:
-                BoxDecoration(
+            width: compact ? 50 : 54,
+            height: compact ? 50 : 54,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
               color: selected
-                  ? const Color(
-                      0xFF39A49E,
-                    )
+                  ? const Color(0xFF007471)
                   : Colors.white,
-              borderRadius:
-                  BorderRadius.circular(
-                10,
-              ),
-              border:
-                  Border.all(
-                color:
-                    const Color(
-                  0xFF00827D,
-                ),
-                width:
-                    selected ? 0 : 1.5,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xFF007471),
+                width: 1.5,
               ),
             ),
             child: Text(
               patient.queueNumber,
-              style:
-                  TextStyle(
+              style: TextStyle(
                 fontSize: 18,
-                fontWeight:
-                    selected
-                        ? FontWeight.w900
-                        : FontWeight.w500,
+                fontWeight: selected
+                    ? FontWeight.w900
+                    : FontWeight.w600,
                 color: selected
                     ? Colors.white
-                    : const Color(
-                        0xFF063E3E,
-                      ),
+                    : const Color(0xFF063E3E),
               ),
             ),
           );
@@ -4022,121 +3759,7 @@ class _NewQueueStatusScreenState
   Widget _buildBottomNavigation(
     double width,
   ) {
-    final compact =
-        width < 380;
-
-    return Container(
-      height:
-          compact ? 66 : 72,
-      color: Colors.white,
-      child: Row(
-        children: [
-          _newQueueNav(
-            Icons.home_outlined,
-            Icons.home_rounded,
-            'Home',
-            0,
-            compact,
-          ),
-          _newQueueNav(
-            Icons
-                .calendar_today_outlined,
-            Icons
-                .calendar_month_rounded,
-            'Appointments',
-            1,
-            compact,
-          ),
-          _newQueueNav(
-            Icons
-                .format_list_bulleted,
-            Icons
-                .format_list_bulleted,
-            'Queue',
-            2,
-            compact,
-          ),
-          _newQueueNav(
-            Icons
-                .notifications_none_rounded,
-            Icons
-                .notifications_rounded,
-            'Alerts',
-            3,
-            compact,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _newQueueNav(
-    IconData icon,
-    IconData selectedIcon,
-    String label,
-    int index,
-    bool compact,
-  ) {
-    final selected =
-        index ==
-            _selectedBottomIndex;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          if (index == 2) {
-            return;
-          }
-
-          QueueNavigationCenter
-              .goToTab(
-            context,
-            index,
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected
-                  ? selectedIcon
-                  : icon,
-              size:
-                  compact ? 21 : 23,
-              color: selected
-                  ? const Color(
-                      0xFF00827D,
-                    )
-                  : const Color(
-                      0xFF789090,
-                    ),
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              label,
-              style:
-                  TextStyle(
-                fontSize:
-                    compact ? 8 : 9,
-                fontWeight: selected
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-                color: selected
-                    ? const Color(
-                        0xFF00827D,
-                      )
-                    : const Color(
-                        0xFF789090,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const QueueBottomBar(selectedIndex: -1);
   }
 }
 

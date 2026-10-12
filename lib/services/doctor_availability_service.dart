@@ -498,7 +498,7 @@ class DoctorAvailabilityService {
       tx.update(reqRef, <String, dynamic>{
         'status': approve ? 'approved' : 'rejected',
         'reviewedAt': FieldValue.serverTimestamp(),
-        if (reviewerName != null) 'reviewedBy': reviewerName,
+        'reviewedBy': ?reviewerName,
         if (note != null && note.trim().isNotEmpty)
           'reviewerNote': note.trim(),
       });
@@ -634,7 +634,7 @@ class DoctorAvailabilityService {
             'submittedAt': FieldValue.serverTimestamp(),
             if (status != 'pending') 'reviewedAt': FieldValue.serverTimestamp(),
             if (status != 'pending') 'reviewedBy': 'Hospital Administration',
-            if (note != null) 'reviewerNote': note,
+            'reviewerNote': ?note,
           });
           writes++;
         }

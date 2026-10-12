@@ -324,36 +324,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 ? 'ID: ${widget.nurseId}'
                 : 'ID: NUR1002-0011',
             department: widget.department ?? 'General Medicine OPD',
-            hospital: widget.hospital ?? 'Government Hospital — Colombo',
-            onAvatarTap: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Sign Out'),
-                  content: const Text('Are you sure you want to sign out of the Nurse Portal?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(builder: (_) => const LoginScreen()),
-                          (route) => false,
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: OpdColors.primary400,
-                        foregroundColor: OpdColors.white,
-                      ),
-                      child: const Text('Sign Out'),
-                    ),
-                  ],
-                ),
-              );
-            },
+            hospital: _effectiveHospitalDisplay,
+            onAvatarTap: _openNurseProfile,
           ),
 
           // Main body content

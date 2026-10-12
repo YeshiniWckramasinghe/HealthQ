@@ -337,8 +337,15 @@ class AppointmentService {
                     .toString()
                     .trim()
                     .toUpperCase();
+            final documentUserId =
+                (data['userId'] ?? '')
+                    .toString()
+                    .trim()
+                    .toUpperCase();
 
-            if (documentNic == cleanedNic) {
+            if (documentNic == cleanedNic ||
+                documentUserId == cleanedNic ||
+                cleanedNic.isEmpty) {
               return _convertToAppointment(
                 appointmentDocument.id,
                 data,
@@ -349,10 +356,10 @@ class AppointmentService {
       }
 
       // -----------------------------------------------------------------------
-      // 2. NIC lookup
+      // 2. Lookup by NIC, userId or authUid
       // -----------------------------------------------------------------------
 
-      final querySnapshot =
+      var querySnapshot =
           await _firestore
               .collection('appointments')
               .where(
@@ -362,11 +369,36 @@ class AppointmentService {
               .get();
 
       if (querySnapshot.docs.isEmpty) {
+        querySnapshot =
+            await _firestore
+                .collection('appointments')
+                .where(
+                  'userId',
+                  isEqualTo: cleanedNic,
+                )
+                .get();
+      }
+
+      if (querySnapshot.docs.isEmpty) {
+        final currentUser = _auth.currentUser;
+        if (currentUser != null) {
+          querySnapshot =
+              await _firestore
+                  .collection('appointments')
+                  .where(
+                    'authUid',
+                    isEqualTo: currentUser.uid,
+                  )
+                  .get();
+        }
+      }
+
+      if (querySnapshot.docs.isEmpty) {
         return null;
       }
 
       // -----------------------------------------------------------------------
-      // Prefer upcoming appointment.
+      // Prefer confirmed, upcoming or waiting appointment.
       // -----------------------------------------------------------------------
 
       QueryDocumentSnapshot<
@@ -383,13 +415,15 @@ class AppointmentService {
                 .trim()
                 .toLowerCase();
 
-        if (status == 'upcoming') {
+        if (status == 'confirmed' ||
+            status == 'upcoming' ||
+            status == 'waiting') {
           selectedDocument = document;
           break;
         }
       }
 
-      // If there is no upcoming appointment,
+      // If there is no confirmed/upcoming appointment,
       // use the first matching appointment.
       selectedDocument ??=
           querySnapshot.docs.first;
@@ -500,19 +534,73 @@ class AppointmentService {
       );
     }
 
-    await _firestore
+    final docRef = _firestore
         .collection('appointments')
-        .doc(appointmentId.trim())
-        .update({
+        .doc(appointmentId.trim());
+
+    final snap = await docRef.get();
+    final data = snap.data() ?? {};
+
+    final currentStatus =
+        (data['status'] ?? '').toString().toLowerCase();
+    final effectiveStatus = (currentStatus == 'pending')
+        ? 'confirmed'
+        : (data['status'] ?? 'confirmed');
+
+    await docRef.update({
       'queueNo': queueNumber,
       'queueNumber': queueNumber,
       'queueStatus': 'Waiting',
+      'status': effectiveStatus,
       'checkedIn': true,
       'checkedInAt':
           FieldValue.serverTimestamp(),
       'updatedAt':
           FieldValue.serverTimestamp(),
     });
+
+    final hospital = (data['hospitalName'] ?? data['hospital'] ?? '').toString();
+    final doctor = (data['doctorName'] ?? data['doctor'] ?? '').toString();
+    final date = (data['date'] ?? '').toString();
+    final session = (data['session'] ?? '').toString();
+    final patientName = (data['patientName'] ?? '').toString();
+    final userId = (data['userId'] ?? '').toString();
+    final authUid = (data['authUid'] ?? data['userUid'] ?? '').toString();
+
+    // Sync to queues collection so live monitors / doctor screens see the checked-in patient
+    await _firestore
+        .collection('queues')
+        .doc('${appointmentId.trim()}_queue')
+        .set({
+      'appointmentId': appointmentId.trim(),
+      'queueNumber': queueNumber,
+      'patientName': patientName.isNotEmpty ? patientName : 'Patient $queueNumber',
+      'doctorName': doctor,
+      'hospital': hospital,
+      'session': session,
+      'date': date,
+      'status': 'Waiting',
+      'userId': userId,
+      'authUid': authUid,
+      'checkedIn': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    final notifyUid = authUid.isNotEmpty
+        ? authUid
+        : (_auth.currentUser?.uid ?? '');
+    if (notifyUid.isNotEmpty) {
+      await _firestore.collection('notifications').add({
+        'userId': notifyUid,
+        'title': 'Checked In to Queue',
+        'body':
+            'You are checked in for ${doctor.isNotEmpty ? doctor : 'your consultation'} at ${hospital.isNotEmpty ? hospital : 'the hospital'}. Token #$queueNumber.',
+        'createdAt': FieldValue.serverTimestamp(),
+        'appointmentId': appointmentId.trim(),
+        'type': 'queue_check_in',
+        'read': false,
+      });
+    }
   }
 
   // ===========================================================================

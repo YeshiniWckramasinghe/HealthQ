@@ -17,6 +17,8 @@ class OpdHeaderBanner extends StatelessWidget {
     this.nurseId = 'ID: NUR1002-021',
     this.department = 'General Medicine OPD',
     this.hospital = 'Government Hospital — Colombo',
+    this.photoBase64,
+    this.photoUrl,
     this.onAvatarTap,
   });
 

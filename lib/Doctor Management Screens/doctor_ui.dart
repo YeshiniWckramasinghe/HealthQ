@@ -416,7 +416,7 @@ class DoctorHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (trailing != null) trailing!,
+          ?trailing,
         ],
       ),
     );
@@ -533,7 +533,7 @@ class SectionTitle extends StatelessWidget {
             color: DoctorColors.ink,
           ),
         ),
-        if (trailing != null) trailing!,
+        ?trailing,
       ],
     );
   }
@@ -765,7 +765,7 @@ class DoctorAvatar extends StatelessWidget {
             : Image.network(
                 photo,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => fallback,
+                errorBuilder: (context, error, stackTrace) => fallback,
               ),
       ),
     );
