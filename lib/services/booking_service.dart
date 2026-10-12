@@ -360,6 +360,8 @@ class AppointmentRecord {
       contact;
   final int queueNo;
   final DateTime createdAt;
+  final bool checkedIn;
+  final String queueStatus;
 
   AppointmentRecord({
     required this.id,
@@ -377,6 +379,8 @@ class AppointmentRecord {
     required this.createdAt,
     this.patientName = '',
     this.contact = '',
+    this.checkedIn = false,
+    this.queueStatus = 'Waiting',
   });
 
   factory AppointmentRecord.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
@@ -407,6 +411,8 @@ class AppointmentRecord {
       createdAt: (m['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       patientName: m['patientName'] ?? '',
       contact: m['contact'] ?? '',
+      checkedIn: (m['checkedIn'] == true),
+      queueStatus: (m['queueStatus'] ?? 'Waiting').toString(),
     );
   }
 

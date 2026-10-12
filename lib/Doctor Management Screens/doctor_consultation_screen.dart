@@ -590,7 +590,7 @@ class _BoxedField extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
-              builder: (_, v, __) => Text(
+              builder: (context, v, child) => Text(
                 '${v.text.length}/$maxLength',
                 style: const TextStyle(fontSize: 11.5, color: DoctorColors.hint),
               ),

@@ -154,7 +154,7 @@ class _DoctorAppointmentsScreenState extends State<DoctorAppointmentsScreen> {
                                 padding:
                                     const EdgeInsets.fromLTRB(20, 0, 20, 20),
                                 itemCount: shown.length,
-                                separatorBuilder: (_, __) =>
+                                separatorBuilder: (context, index) =>
                                     const SizedBox(height: 10),
                                 itemBuilder: (_, i) => _AppointmentCard(
                                   appointment: shown[i],

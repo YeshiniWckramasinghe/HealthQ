@@ -212,11 +212,14 @@ class _PatientManagementHubScreenState
       body: Column(
         children: [
           // Header banner with hospital corridor photo
-          const OpdHeaderBanner(
+          OpdHeaderBanner(
             title: 'Patient Management',
-            nurseId: 'ID: NUR1002-021',
-            department: 'General Medicine OPD',
-            hospital: 'Government Hospital — Colombo',
+            nurseId: widget.nurseId ?? 'ID: NUR1002-021',
+            department: _nurseDepartment ?? widget.department ?? 'General Medicine OPD',
+            hospital: _effectiveHospitalDisplay,
+            photoBase64: _nursePhotoBase64.isNotEmpty ? _nursePhotoBase64 : null,
+            photoUrl: _nursePhotoUrl.isNotEmpty ? _nursePhotoUrl : null,
+            onAvatarTap: _openNurseProfile,
           ),
 
           // Content

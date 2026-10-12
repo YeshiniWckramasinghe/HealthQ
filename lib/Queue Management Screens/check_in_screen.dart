@@ -92,8 +92,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
   static const _border = Color(0xFFD6E5E5);
   static const _error = Color(0xFFB3261E);
 
-  static const _hospitalImage =
-      'lib/assets/images/check_in_hospital.jpg';
 
   static final _nicFormat = RegExp(
     r'^(?:[0-9]{12}|[0-9]{9}[VX])$',
@@ -449,8 +447,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) =>
-              const QueueStatusScreen(),
+          builder: (_) => QueueStatusScreen(
+            appointmentId: matchedAppointment?.appointmentId,
+            initialAppointment: matchedAppointment,
+          ),
         ),
       );
     } catch (e) {
@@ -567,6 +567,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       child: Scaffold(
         backgroundColor: _background,
         resizeToAvoidBottomInset: true,
+        bottomNavigationBar: const QueueBottomBar(selectedIndex: -1),
         body: SafeArea(
           bottom: false,
           child: Align(
@@ -603,22 +604,17 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         children: [
                           Material(
                             color: Colors.white,
-                            shape:
-                                const CircleBorder(),
+                            shape: const CircleBorder(),
                             child: InkWell(
-                              onTap:
-                                  _goBackToHome,
-                              customBorder:
-                                  const CircleBorder(),
-                              child:
-                                  const SizedBox(
+                              onTap: _goBackToHome,
+                              customBorder: const CircleBorder(),
+                              child: const SizedBox(
                                 width: 42,
                                 height: 42,
                                 child: Icon(
-                                  Icons
-                                      .arrow_back_ios_new,
+                                  Icons.arrow_back_rounded,
                                   color: _dark,
-                                  size: 19,
+                                  size: 22,
                                 ),
                               ),
                             ),
@@ -631,9 +627,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                             style: TextStyle(
                               color: _dark,
                               fontSize: 24,
-                              fontWeight:
-                                  FontWeight.w800,
-                              height: 1.2,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.5,
                             ),
                           ),
                         ],
@@ -643,10 +638,21 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         height: 14,
                       ),
 
-                      _buildBanner(),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          'Enter your details to check in for your\nappointment today.',
+                          style: TextStyle(
+                            color: _muted,
+                            fontSize: 14,
+                            height: 1.35,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ),
 
                       const SizedBox(
-                        height: 28,
+                        height: 24,
                       ),
 
                       Padding(
@@ -860,153 +866,38 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   // ==========================================================================
-  // BANNER
-  // ==========================================================================
-
-  Widget _buildBanner() {
-    return ClipRRect(
-      borderRadius:
-          BorderRadius.circular(16),
-      child: AspectRatio(
-        aspectRatio: 2.24,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.asset(
-              _hospitalImage,
-              fit: BoxFit.cover,
-              errorBuilder: (
-                context,
-                error,
-                stackTrace,
-              ) {
-                return const ColoredBox(
-                  color: _dark,
-                  child: Align(
-                    alignment:
-                        Alignment.bottomCenter,
-                    child: Padding(
-                      padding:
-                          EdgeInsets.all(8),
-                      child: Text(
-                        'Image missing: check '
-                        'lib/assets/images/check_in_hospital.jpg',
-                        textAlign:
-                            TextAlign.center,
-                        style: TextStyle(
-                          color:
-                              Colors.white,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            ColoredBox(
-              color:
-                  Colors.black.withValues(
-                alpha: 0.38,
-              ),
-            ),
-            const Align(
-              alignment:
-                  Alignment.centerLeft,
-              child: Padding(
-                padding:
-                    EdgeInsets.all(12),
-                child: Text(
-                  'Enter your details to check in for your\n'
-                  'appointment today',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    height: 1.2,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================================
   // APPOINTMENT DETAILS CARD
   // ==========================================================================
 
   Widget _buildDetailsCard() {
-    final appointment =
-        _appointment;
+    final appointment = _appointment;
 
-    final rows =
-        <MapEntry<String, String>>[
-      MapEntry(
-        'Hospital',
-        appointment?.hospital ?? '',
-      ),
-      MapEntry(
-        'Date',
-        appointment?.date ?? '',
-      ),
-      MapEntry(
-        'Session',
-        appointment?.session ?? '',
-      ),
-      MapEntry(
-        'Doctor',
-        appointment?.doctor ?? '',
-      ),
-      MapEntry(
-        'Speciality',
-        appointment?.speciality ?? '',
-      ),
-      MapEntry(
-        'Patient',
-        appointment?.patient ?? '',
-      ),
-      MapEntry(
-        'NIC',
-        _nic,
-      ),
-      MapEntry(
-        'Date of Birth',
-        appointment?.dateOfBirth ?? '',
-      ),
-      MapEntry(
-        'Contact',
-        appointment?.contact ?? '',
-      ),
-      MapEntry(
-        'Appointment ID',
-        appointment
-                    ?.appointmentId
-                    .isNotEmpty ==
-                true
-            ? appointment!.appointmentId
-            : 'Optional / not assigned',
-      ),
-      MapEntry(
-        'Est. Queue No.',
-        appointment
-                ?.estimatedQueueNumber ??
-            '',
-      ),
+    final estQueue = appointment?.estimatedQueueNumber ?? '';
+    final formattedQueue = estQueue.isNotEmpty
+        ? (estQueue.startsWith('#') ? estQueue : '#$estQueue')
+        : '-';
+
+    final rows = <MapEntry<String, String>>[
+      MapEntry('Hospital', appointment?.hospital.isNotEmpty == true ? appointment!.hospital : '-'),
+      MapEntry('Date', appointment?.date.isNotEmpty == true ? appointment!.date : '-'),
+      MapEntry('Session', appointment?.session.isNotEmpty == true ? appointment!.session : '-'),
+      MapEntry('Doctor', appointment?.doctor.isNotEmpty == true ? appointment!.doctor : '-'),
+      MapEntry('Speciality', appointment?.speciality.isNotEmpty == true ? appointment!.speciality : '-'),
+      MapEntry('Patient', appointment?.patient.isNotEmpty == true ? appointment!.patient : '-'),
+      MapEntry('NIC', _nic.isNotEmpty ? _nic : (appointment?.nic.isNotEmpty == true ? appointment!.nic : '-')),
+      MapEntry('Contact', appointment?.contact.isNotEmpty == true ? appointment!.contact : '-'),
+      MapEntry('Est. Queue No.', formattedQueue),
     ];
 
     return Container(
       width: double.infinity,
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 12,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 14,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius:
-            BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: _border,
         ),
@@ -1015,28 +906,20 @@ class _CheckInScreenState extends State<CheckInScreen> {
         children: List.generate(
           rows.length,
           (index) {
-            final row =
-                rows[index];
+            final row = rows[index];
 
             return Padding(
               padding: EdgeInsets.only(
-                bottom:
-                    index ==
-                            rows.length - 1
-                        ? 0
-                        : 8,
+                bottom: index == rows.length - 1 ? 0 : 9,
               ),
               child: Row(
-                crossAxisAlignment:
-                    CrossAxisAlignment
-                        .start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     flex: 4,
                     child: Text(
                       row.key,
-                      style:
-                          const TextStyle(
+                      style: const TextStyle(
                         color: _muted,
                         fontSize: 13,
                         height: 1.25,
@@ -1050,17 +933,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     flex: 7,
                     child: Text(
                       row.value,
-                      textAlign:
-                          TextAlign.right,
+                      textAlign: TextAlign.right,
                       style: TextStyle(
-                        color: row.key ==
-                                'Est. Queue No.'
-                            ? _primary
-                            : _dark,
+                        color: row.key == 'Est. Queue No.' ? _primary : _dark,
                         fontSize: 13,
                         height: 1.25,
-                        fontWeight:
-                            FontWeight.w700,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),

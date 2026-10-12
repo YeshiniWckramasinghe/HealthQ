@@ -104,7 +104,7 @@ class AttachmentImageViewer extends StatelessWidget {
                 ),
               );
             },
-            errorBuilder: (_, __, ___) => const Padding(
+            errorBuilder: (context, error, stackTrace) => const Padding(
               padding: EdgeInsets.all(32),
               child: Text(
                 'Could not load this image.',
@@ -166,7 +166,7 @@ class AttachmentTile extends StatelessWidget {
           attachment.url,
           fit: BoxFit.cover,
           cacheWidth: 132,
-          errorBuilder: (_, __, ___) => iconBox,
+          errorBuilder: (context, error, stackTrace) => iconBox,
           loadingBuilder: (context, child, progress) =>
               progress == null ? child : iconBox,
         ),
@@ -317,7 +317,7 @@ class _ConsultationAttachmentsSectionState
   ///     allowMultiple: true,
   ///     withData: true,
   ///   );
-  ///   return r?.files ?? const <PlatformFile>[];
+  ///   return `r?.files ?? const <PlatformFile>[]`;
   Future<List<PlatformFile>> _pickFiles() {
     return FilePicker.pickFiles(
       type: FileType.custom,

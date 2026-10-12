@@ -111,7 +111,7 @@ class _DoctorAvailabilityRequestsScreenState
                 return ListView.separated(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                   itemCount: shown.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 14),
+                  separatorBuilder: (context, index) => const SizedBox(height: 14),
                   itemBuilder: (_, i) => _RequestCard(
                     request: shown[i],
                     onTap: () => Navigator.of(context).push<void>(

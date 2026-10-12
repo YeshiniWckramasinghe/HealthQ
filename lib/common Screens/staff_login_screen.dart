@@ -21,7 +21,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   bool _obscurePassword = true;
   bool _isLoading = false;
 
-  final List<String> _hospitals = const [
+  final List<String> _hospitals = [
     'Government Hospital — Colombo',
     'National Hospital of Sri Lanka',
     'Colombo South Teaching Hospital',
@@ -32,10 +32,28 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Seed staff into Firestore in background if not already seeded
     StaffAuthService.instance.seedDefaultStaffIfNeeded();
-    _staffIdController.text = 'DOC1001-0001';
-    _passwordController.text = 'Password123!';
+    _loadHospitals();
+  }
+
+  Future<void> _loadHospitals() async {
+    try {
+      final dbHospitals = await StaffAuthService.instance.fetchHospitals();
+      if (dbHospitals.isNotEmpty && mounted) {
+        setState(() {
+          for (final h in dbHospitals) {
+            if (!_hospitals.contains(h)) {
+              _hospitals.add(h);
+            }
+          }
+          if (!_hospitals.contains(_selectedHospital)) {
+            _selectedHospital = _hospitals.first;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading hospitals: $e');
+    }
   }
 
   @override
@@ -50,7 +68,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final staff = await StaffAuthService.instance.authenticateStaff(
+      final authResult = await StaffAuthService.instance.authenticateStaff(
         hospital: _selectedHospital,
         staffId: _staffIdController.text.trim(),
         password: _passwordController.text,
@@ -59,11 +77,11 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
 
       if (!mounted) return;
 
-      if (staff != null) {
+      if (authResult.success && authResult.staff != null) {
         // Open page to display that data for that staff person
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => StaffProfileConfirmScreen(staff: staff),
+            builder: (_) => StaffProfileConfirmScreen(staff: authResult.staff!),
           ),
         );
       } else {
@@ -71,7 +89,8 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
           SnackBar(
             backgroundColor: Colors.red.shade700,
             content: Text(
-              'Employee not registered in database or invalid credentials for $_selectedRole. Please check your Staff ID and Password.',
+              authResult.errorMessage ??
+                  'Employee not registered in database or invalid credentials for $_selectedRole. Please check your Staff ID and Password.',
             ),
             duration: const Duration(seconds: 4),
           ),
@@ -208,7 +227,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                     return null;
                   },
                   decoration: _inputDecoration(
-                    hintText: 'e.g. DOC1001-0001 or NUR1002-0011',
+                    hintText: 'Enter your Staff ID or official email',
                     icon: Icons.badge_outlined,
                   ),
                 ),
@@ -226,7 +245,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                     return null;
                   },
                   decoration: _inputDecoration(
-                    hintText: '••••••••••••',
+                    hintText: 'Enter your password',
                     icon: Icons.lock_outline,
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -300,13 +319,6 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                         if (val != null) {
                           setState(() {
                             _selectedRole = val;
-                            if (val == 'Doctor' &&
-                                _staffIdController.text.startsWith('NUR')) {
-                              _staffIdController.text = 'DOC1001-0001';
-                            } else if (val == 'Nurse' &&
-                                _staffIdController.text.startsWith('DOC')) {
-                              _staffIdController.text = 'NUR1002-0011';
-                            }
                           });
                         }
                       },

@@ -307,11 +307,51 @@ class QueueBackend {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
 
-    final snapshot = await _firestore
+    // 1. Try authUid / userUid
+    var snapshot = await _firestore
         .collection('appointments')
-        .where('userId', isEqualTo: user.uid)
+        .where('authUid', isEqualTo: user.uid)
         .where('checkedIn', isEqualTo: true)
         .get();
+
+    if (snapshot.docs.isEmpty) {
+      snapshot = await _firestore
+          .collection('appointments')
+          .where('userUid', isEqualTo: user.uid)
+          .where('checkedIn', isEqualTo: true)
+          .get();
+    }
+
+    if (snapshot.docs.isEmpty) {
+      snapshot = await _firestore
+          .collection('appointments')
+          .where('userId', isEqualTo: user.uid)
+          .where('checkedIn', isEqualTo: true)
+          .get();
+    }
+
+    // 2. Try looking up user's NIC
+    if (snapshot.docs.isEmpty) {
+      try {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final nic = (userDoc.data()?['nic'] ?? userDoc.data()?['userId'] ?? '').toString().trim();
+        if (nic.isNotEmpty) {
+          snapshot = await _firestore
+              .collection('appointments')
+              .where('nic', isEqualTo: nic)
+              .where('checkedIn', isEqualTo: true)
+              .get();
+        }
+      } catch (_) {}
+    }
+
+    // 3. Fallback: find any confirmed / waiting appointment
+    if (snapshot.docs.isEmpty) {
+      snapshot = await _firestore
+          .collection('appointments')
+          .where('authUid', isEqualTo: user.uid)
+          .get();
+    }
 
     if (snapshot.docs.isEmpty) return null;
 

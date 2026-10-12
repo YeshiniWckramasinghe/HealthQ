@@ -145,7 +145,7 @@ class DoctorAppointment {
   /// "Male · 34 years" - skips whatever is not recorded.
   String get demographics {
     final parts = <String>[
-      if (patientGender != null) patientGender!,
+      ?patientGender,
       if (patientAge != null) '$patientAge years',
     ];
     return parts.isEmpty ? 'Details not recorded' : parts.join(' · ');
@@ -609,7 +609,7 @@ class DoctorService {
           <String, String>{
             'title': title,
             'subtitle': subtitle,
-            if (details != null) 'details': details,
+            'details': ?details,
           };
 
       final patients = <String, Map<String, dynamic>>{
