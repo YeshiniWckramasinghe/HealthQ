@@ -147,6 +147,15 @@ class _DoctorConsultationScreenState extends State<DoctorConsultationScreen> {
       return;
     }
 
+    if (_rx.text.trim().isEmpty) {
+      showDoctorSnack(
+        context,
+        'Please enter the medicine before completing.',
+        error: true,
+      );
+      return;
+    }
+
     final ok = await showConfirmDialog(
       context,
       title: 'Complete Consultation',
@@ -590,7 +599,7 @@ class _BoxedField extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
-              builder: (context, v, child) => Text(
+              builder: (_, v, _) => Text(
                 '${v.text.length}/$maxLength',
                 style: const TextStyle(fontSize: 11.5, color: DoctorColors.hint),
               ),

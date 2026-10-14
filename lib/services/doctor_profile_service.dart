@@ -1,11 +1,14 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
 // ---------------------------------------------------------------------------
 // Reads / updates the doctor's own record in the existing `staff` collection
 // (created by StaffAuthService). Only these fields are ever written:
-//   name, specialty, department, email, contactNo, avatarColor,
-//   bookingDoctorId, updatedAt
+//   name, specialty, department, email, contactNo, avatarColor, photoUrl,
+//   photoStoragePath, bookingDoctorId, updatedAt
 // Nothing else on the teammates' staff documents is touched, and a staff
 // document is never created from here.
 // ---------------------------------------------------------------------------
@@ -52,7 +55,9 @@ class DoctorProfile {
   });
 
   factory DoctorProfile.fromMap(
-      Map<String, dynamic> m, DoctorProfile fallback) {
+    Map<String, dynamic> m,
+    DoctorProfile fallback,
+  ) {
     final color = m['avatarColor'];
     return DoctorProfile(
       staffId: fallback.staffId,
@@ -64,7 +69,9 @@ class DoctorProfile {
       email: _s(m['email'], fallback.email),
       phone: _s(m['contactNo'], fallback.phone),
       avatarColor: color is num ? color.toInt() : fallback.avatarColor,
-      photoUrl: _opt(m['photoUrl']) ?? fallback.photoUrl,
+      photoUrl: m.containsKey('photoUrl')
+          ? _opt(m['photoUrl'])
+          : fallback.photoUrl,
       bookingDoctorId: _opt(m['bookingDoctorId']) ?? fallback.bookingDoctorId,
     );
   }
@@ -90,7 +97,9 @@ class DoctorProfileService {
   static final DoctorProfileService instance = DoctorProfileService._();
   DoctorProfileService._();
 
+  //Firebase database එකට සම්බන්ධ වන කොටස
   FirebaseFirestore get _db => FirebaseFirestore.instance;
+  FirebaseStorage get _storage => FirebaseStorage.instance;
 
   static const List<String> specialties = <String>[
     'General Medicine',
@@ -135,9 +144,12 @@ class DoctorProfileService {
   /// StaffAuthService seeds it), but fall back to a staffId query so records
   /// created some other way still work.
   Future<DocumentReference<Map<String, dynamic>>?> _resolveRef(
-      String staffId) async {
+    String staffId,
+  ) async {
     final cached = _refCache[staffId];
     if (cached != null) return cached;
+
+    //instance ek use karala db collection eke doctorge profile ek read and update karanna use karanva
 
     final direct = _db.collection('staff').doc(staffId);
     final snap = await direct.get();
@@ -157,8 +169,10 @@ class DoctorProfileService {
 
   /// Live profile. Never errors: if Firestore is unreachable the stream just
   /// ends and the UI keeps showing [fallback] (the data from login).
+  /// Firestore එකෙන් profile changes real-time ලබාගන්නවා. - profileStream
   Stream<DoctorProfile> profileStream(DoctorProfile fallback) async* {
     try {
+      //Doctorගේ staff document එක සොයාගන්නවා.
       final ref = await _resolveRef(fallback.staffId);
       if (ref == null) return;
       await for (final snap in ref.snapshots()) {
@@ -205,7 +219,8 @@ class DoctorProfileService {
     final ref = await _resolveRef(staffId);
     if (ref == null) {
       throw Exception(
-          'Your staff record was not found in the database. Please check your connection and try again.');
+        'Your staff record was not found in the database. Please check your connection and try again.',
+      );
     }
     await ref.update(<String, dynamic>{
       'name': name.trim(),
@@ -218,6 +233,7 @@ class DoctorProfileService {
     });
   }
 
+  ///Doctorගේ avatar colour එක වෙනස් කරනවා.
   Future<void> setAvatarColor(String staffId, int color) async {
     final ref = await _resolveRef(staffId);
     if (ref == null) throw Exception('Your staff record was not found.');
@@ -227,8 +243,88 @@ class DoctorProfileService {
     });
   }
 
+  Future<void> setProfilePhoto({
+    required String staffId,
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    if (bytes.isEmpty) throw Exception('The selected image is empty.');
+    if (bytes.length > 5 * 1024 * 1024) {
+      throw Exception('The image must be 5 MB or smaller.');
+    }
+    final extension = fileName.split('.').last.toLowerCase();
+    final contentType = switch (extension) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => null,
+    };
+    if (contentType == null) {
+      throw Exception('Choose a JPG, PNG, or WebP image.');
+    }
+
+    final profileRef = await _resolveRef(staffId);
+    if (profileRef == null) throw Exception('Your staff record was not found.');
+    final current = await profileRef.get();
+    final currentData = current.data();
+    final oldPath = _opt(currentData?['photoStoragePath']);
+    final oldUrl = _opt(currentData?['photoUrl']);
+    final photoPath =
+        'doctor_profiles/${staffId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}/avatar_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1 << 20)}.$extension';
+    final photoRef = _storage.ref(photoPath);
+
+    try {
+      await photoRef.putData(bytes, SettableMetadata(contentType: contentType));
+      final photoUrl = await photoRef.getDownloadURL();
+      await profileRef.update(<String, dynamic>{
+        'photoUrl': photoUrl,
+        'photoStoragePath': photoPath,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      try {
+        await photoRef.delete();
+      } catch (cleanupError) {
+        debugPrint('DoctorProfileService: photo cleanup failed: $cleanupError');
+      }
+      rethrow;
+    }
+
+    await _deleteStoredPhoto(oldPath, oldUrl);
+  }
+
+  Future<void> removeProfilePhoto(String staffId) async {
+    final profileRef = await _resolveRef(staffId);
+    if (profileRef == null) throw Exception('Your staff record was not found.');
+    final current = await profileRef.get();
+    final currentData = current.data();
+    final oldPath = _opt(currentData?['photoStoragePath']);
+    final oldUrl = _opt(currentData?['photoUrl']);
+
+    await profileRef.update(<String, dynamic>{
+      'photoUrl': FieldValue.delete(),
+      'photoStoragePath': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    await _deleteStoredPhoto(oldPath, oldUrl);
+  }
+
+  Future<void> _deleteStoredPhoto(String? path, String? url) async {
+    if ((path == null || path.isEmpty) && (url == null || url.isEmpty)) return;
+    try {
+      if (path != null && path.isNotEmpty) {
+        await _storage.ref(path).delete();
+      } else if (url != null && url.isNotEmpty) {
+        await _storage.refFromURL(url).delete();
+      }
+    } catch (e) {
+      debugPrint('DoctorProfileService: old photo cleanup failed: $e');
+    }
+  }
+
   /// Remembers which `hospitals/{id}/doctors` entry this doctor is, so patient
   /// bookings keep reaching them even after they edit their display name.
+  /// Patient bookings සඳහා භාවිත වන doctor ID එක සම්බන්ධ කරනවා.
   Future<void> linkBookingDoctor(String staffId, String bookingDoctorId) async {
     try {
       final ref = await _resolveRef(staffId);

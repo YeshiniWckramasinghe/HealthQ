@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/doctor_profile_service.dart';
 import 'doctor_ui.dart';
@@ -15,12 +18,16 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _email = TextEditingController();
   final TextEditingController _phone = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
 
   bool _initialised = false;
   String _specialty = '';
   String _department = '';
   int? _avatarColor;
   int? _originalAvatarColor;
+  Uint8List? _newPhotoBytes;
+  String? _newPhotoName;
+  bool _removePhoto = false;
   bool _saving = false;
 
   String? _nameError;
@@ -93,6 +100,15 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
         await DoctorProfileService.instance
             .setAvatarColor(profile.staffId, _avatarColor!);
       }
+      if (_newPhotoBytes != null && _newPhotoName != null) {
+        await DoctorProfileService.instance.setProfilePhoto(
+          staffId: profile.staffId,
+          fileName: _newPhotoName!,
+          bytes: _newPhotoBytes!,
+        );
+      } else if (_removePhoto) {
+        await DoctorProfileService.instance.removeProfilePhoto(profile.staffId);
+      }
       if (!mounted) return;
       showDoctorSnack(context, 'Profile updated successfully.');
       Navigator.of(context).maybePop();
@@ -103,35 +119,46 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
     }
   }
 
-  void _pickAvatarColor() {
-    showModalBottomSheet<void>(
+  Future<void> _showPhotoOptions() async {
+    final source = await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Choose profile avatar',
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Take a photo'),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Text(
+                'Choose initials color',
                 style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: DoctorColors.ink),
+                  fontWeight: FontWeight.w700,
+                  color: DoctorColors.ink,
+                ),
               ),
-              const SizedBox(height: 16),
-              Wrap(
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Wrap(
                 spacing: 16,
                 runSpacing: 16,
                 children: [
-                  for (final c in DoctorProfileService.avatarColors)
+                  for (final color in DoctorProfileService.avatarColors)
                     GestureDetector(
                       onTap: () {
-                        setState(() => _avatarColor = c);
+                        setState(() => _avatarColor = color);
                         Navigator.of(ctx).pop();
                       },
                       child: Stack(
@@ -139,30 +166,89 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
                         children: [
                           InitialsAvatar(
                             name: _name.text,
-                            size: 56,
-                            color: Color(c),
+                            size: 48,
+                            color: Color(color),
                           ),
-                          if (_avatarColor == c)
+                          if (_avatarColor == color)
                             Container(
-                              width: 56,
-                              height: 56,
+                              width: 48,
+                              height: 48,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                    color: DoctorColors.ink, width: 2.5),
+                                  color: DoctorColors.ink,
+                                  width: 2.5,
+                                ),
                               ),
-                              child: const Icon(Icons.check_rounded,
-                                  color: Colors.white),
+                              child: const Icon(
+                                Icons.check_rounded,
+                                color: Colors.white,
+                              ),
                             ),
                         ],
                       ),
                     ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
+    );
+    if (source == null || !mounted) return;
+
+    try {
+      final file = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1600,
+        maxHeight: 1600,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      if (bytes.length > 5 * 1024 * 1024) {
+        showDoctorSnack(context, 'The image must be 5 MB or smaller.',
+            error: true);
+        return;
+      }
+      setState(() {
+        _newPhotoBytes = bytes;
+        _newPhotoName = file.name;
+        _removePhoto = false;
+      });
+    } catch (e) {
+      if (mounted) showDoctorSnack(context, cleanError(e), error: true);
+    }
+  }
+
+  void _deletePhoto() {
+    setState(() {
+      _newPhotoBytes = null;
+      _newPhotoName = null;
+      _removePhoto = true;
+    });
+  }
+
+  Widget _profileAvatar(DoctorProfile profile) {
+    final photoBytes = _newPhotoBytes;
+    if (photoBytes != null) {
+      return ClipOval(
+        child: Image.memory(
+          photoBytes,
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    if (!_removePhoto && profile.photoUrl != null) {
+      return DoctorAvatar(profile: profile, size: 96);
+    }
+    return InitialsAvatar(
+      name: _name.text,
+      size: 96,
+      color: _avatarColor == null ? DoctorColors.teal : Color(_avatarColor!),
     );
   }
 
@@ -248,8 +334,6 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final profile = DoctorSessionScope.of(context).profile;
-    final avatarColor =
-        _avatarColor != null ? Color(_avatarColor!) : DoctorColors.teal;
 
     return DoctorScaffold(
       child: Column(
@@ -263,15 +347,11 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
                 // Avatar
                 Center(
                   child: GestureDetector(
-                    onTap: _pickAvatarColor,
+                    onTap: _showPhotoOptions,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        InitialsAvatar(
-                          name: _name.text,
-                          size: 96,
-                          color: avatarColor,
-                        ),
+                        _profileAvatar(profile),
                         Positioned(
                           right: -2,
                           bottom: -2,
@@ -287,6 +367,35 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
                                 color: Colors.white, size: 15),
                           ),
                         ),
+                        if (_newPhotoBytes != null ||
+                            (!_removePhoto && profile.photoUrl != null))
+                          Positioned(
+                            left: -2,
+                            bottom: -2,
+                            child: Tooltip(
+                              message: 'Remove profile photo',
+                              child: GestureDetector(
+                                onTap: _deletePhoto,
+                                child: Container(
+                                  width: 30,
+                                  height: 30,
+                                  decoration: BoxDecoration(
+                                    color: DoctorColors.red,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: Colors.white,
+                                    size: 15,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -294,7 +403,7 @@ class _DoctorEditProfileScreenState extends State<DoctorEditProfileScreen> {
                 const SizedBox(height: 12),
                 Center(
                   child: GestureDetector(
-                    onTap: _pickAvatarColor,
+                    onTap: _showPhotoOptions,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 18, vertical: 8),
